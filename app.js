@@ -354,8 +354,6 @@ const trackingPortalOptions = {
 };
 function portalForTracking(state, category, level) {
   if (level === 'higher') return state === 'Tamil Nadu' ? 'Tamil Nadu CM Helpline' : 'Karnataka Janaspandana (iPGRS)';
-  if (category === 'Crop damage / insurance') return 'PM Fasal Bima Yojana (PMFBY)';
-  if (category === 'Scheme payment not received') return 'PM-KISAN grievance form';
   return state === 'Tamil Nadu' ? 'Tamil Nadu CM Helpline' : 'Karnataka Janaspandana (iPGRS)';
 }
 function refreshTrackingPortalOptions() {
@@ -365,7 +363,7 @@ function refreshTrackingPortalOptions() {
   const preferred = portalForTracking(state, category, level);
   const allowed = level === 'higher'
     ? (state === 'Tamil Nadu' ? ['Tamil Nadu CM Helpline'] : ['Karnataka Janaspandana (iPGRS)'])
-    : [preferred, state === 'Tamil Nadu' ? 'Tamil Nadu CM Helpline' : 'Karnataka Janaspandana (iPGRS)'].filter((item, index, all) => all.indexOf(item) === index);
+    : [state === 'Tamil Nadu' ? 'Tamil Nadu CM Helpline' : 'Karnataka Janaspandana (iPGRS)', preferred, ...(category === 'Crop damage / insurance' ? ['PM Fasal Bima Yojana (PMFBY)'] : category === 'Scheme payment not received' ? ['PM-KISAN grievance form'] : [])].filter((item, index, all) => all.indexOf(item) === index);
   const select = document.getElementById('trackingPortal');
   select.innerHTML = allowed.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
 }
