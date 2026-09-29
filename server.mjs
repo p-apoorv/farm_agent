@@ -206,8 +206,8 @@ function evaluateSchemeEligibility(body) {
   const lang = body.language || 'en';
   const rulesCheckedAt = new Date().toISOString();
   const pmkisanUrl = 'https://pmkisan.gov.in/';
-  const samathuvapuramUrl = 'https://tnrd.tn.gov.in/schemes/st_samathuvapuram.html';
-  const krushakUrl = 'https://agri.odisha.gov.in/en/agriculturedepartmentagricultu/kalia';
+  const samathuvapuramUrl = 'https://tnrd.tn.gov.in/project/go_files/3_722_2023_91.pdf';
+  const krushakUrl = 'https://krushak.odisha.gov.in/';
   const possible = (name, reason, action, sourceUrl, status = 'possible_match') => ({ name, status, eligible: status === 'possible_match', reason, action, sourceUrl, source: 'Official government source', updatedAt: rulesCheckedAt });
 
   let pmReason;
@@ -233,8 +233,19 @@ function evaluateSchemeEligibility(body) {
     pmAction = schemeText(lang, 'Complete mandatory eKYC and check beneficiary status, land verification and bank/DBT details on PM-KISAN.', 'கட்டாய eKYC-ஐ முடித்து PM-KISAN-ல் பயனாளர் நிலை, நிலச் சரிபார்ப்பு மற்றும் வங்கி/DBT விவரங்களைப் பார்க்கவும்.', 'ಕಡ್ಡಾಯ eKYC ಪೂರ್ಣಗೊಳಿಸಿ PM-KISAN ನಲ್ಲಿ ಫಲಾನುಭವಿ ಸ್ಥಿತಿ, ಭೂ ಪರಿಶೀಲನೆ ಮತ್ತು ಬ್ಯಾಂಕ್/DBT ವಿವರಗಳನ್ನು ಪರಿಶೀಲಿಸಿ.');
   }
 
-  const samathuvapuram = body.state === 'Tamil Nadu'
-    ? possible('Mukhyamantri Samathuvapuram', schemeText(lang,
+  if (pmStatus === 'possible_match' && ['after', 'inheritance'].includes(body.landAcquisition)) {
+    pmStatus = 'manual_review';
+    pmReason = schemeText(lang, 'You reported a post-cutoff land transfer or succession. The portal flags such cases for verification; succession can be treated differently, so a manual check is needed.', 'காலக்கெடுவுக்குப் பிந்தைய நில மாற்றம் அல்லது வாரிசுரிமை எனத் தெரிவித்துள்ளீர்கள். வாரிசுரிமைக்கு வேறு விதி இருக்கலாம்; எனவே அலுவலகச் சரிபார்ப்பு தேவை.', 'ಕಟ್‌ಆಫ್ ನಂತರದ ಭೂ ವರ್ಗಾವಣೆ ಅಥವಾ ವಾರಸುದಾರಿಕೆ ಎಂದು ತಿಳಿಸಿದ್ದಾರೆ. ವಾರಸುದಾರಿಕೆಗೆ ಬೇರೆ ನಿಯಮ ಇರಬಹುದು; ಆದ್ದರಿಂದ ಕೈಯಾರೆ ಪರಿಶೀಲನೆ ಅಗತ್ಯ.');
+  } else if (pmStatus === 'possible_match' && body.familyBenefit === 'yes') {
+    pmStatus = 'manual_review';
+    pmReason = schemeText(lang, 'You reported another beneficiary in the same farmer family. Duplicate family records may be withheld pending verification.', 'அதே விவசாயக் குடும்பத்தில் மற்றொரு பயனாளர் இருப்பதாகத் தெரிவித்துள்ளீர்கள். நகல் குடும்பப் பதிவுகள் சரிபார்ப்பு வரை நிறுத்தப்படலாம்.', 'ಅದೇ ರೈತ ಕುಟುಂಬದಲ್ಲಿ ಮತ್ತೊಬ್ಬ ಫಲಾನುಭವಿ ಇದ್ದಾರೆ ಎಂದು ತಿಳಿಸಿದ್ದಾರೆ. ಕುಟುಂಬದ ನಕಲಿ ದಾಖಲೆಗಳು ಪರಿಶೀಲನೆಗಾಗಿ ತಡೆಹಿಡಿಯಬಹುದು.');
+  } else if (pmStatus === 'possible_match' && (body.landAcquisition === 'unsure' || body.familyBenefit === 'unsure')) {
+    pmStatus = 'manual_review';
+    pmReason = schemeText(lang, 'One or more land-transfer or family-benefit facts are unknown, so a thorough PM-KISAN screen needs a manual check.', 'நில மாற்றம் அல்லது குடும்பப் பயனாளர் தொடர்பான விவரங்களில் ஒன்று தெரியவில்லை; எனவே PM-KISAN-க்கு கூடுதல் சரிபார்ப்பு தேவை.', 'ಭೂ ವರ್ಗಾವಣೆ ಅಥವಾ ಕುಟುಂಬದ ಫಲಾನುಭವಿಯ ವಿವರಗಳಲ್ಲಿ ಒಂದು ತಿಳಿದಿಲ್ಲ; ಆದ್ದರಿಂದ PM-KISAN ಗೆ ಕೈಯಾರೆ ಪರಿಶೀಲನೆ ಬೇಕು.');
+  }
+
+  let samathuvapuram = body.state === 'Tamil Nadu'
+    ? possible('Periyar Ninaivu Samathuvapuram (housing)', schemeText(lang,
       'This is Tamil Nadu’s Samathuvapuram housing programme, not a general farmer cash/benefit scheme. House allotment depends on an active local settlement, beneficiary selection and district approval.',
       'இது தமிழ்நாட்டின் சமத்துவபுரம் குடியிருப்புத் திட்டம்; பொதுவான விவசாயி பண உதவித் திட்டம் அல்ல. உள்ளூர் குடியிருப்பு, பயனாளர் தேர்வு மற்றும் மாவட்ட ஒப்புதலைப் பொறுத்து வீடு ஒதுக்கப்படும்.',
       'ಇದು ತಮಿಳುನಾಡಿನ ಸಮத்தುವಪುರಂ ವಸತಿ ಯೋಜನೆ; ಸಾಮಾನ್ಯ ರೈತ ನಗದು/ಲಾಭ ಯೋಜನೆ ಅಲ್ಲ. ಮನೆ ಹಂಚಿಕೆ ಸ್ಥಳೀಯ ವಸತಿ, ಫಲಾನುಭವಿಗಳ ಆಯ್ಕೆ ಮತ್ತು ಜಿಲ್ಲಾಧಿಕಾರಿ ಅನುಮೋದನೆಗೆ ಒಳಪಟ್ಟಿದೆ.'), schemeText(lang,
@@ -249,15 +260,73 @@ function evaluateSchemeEligibility(body) {
       'தமிழ்நாட்டில் வீடு ஒதுக்கீடு தேவைப்பட்டால் மட்டுமே தமிழ்நாடு ஊரக வளர்ச்சி மற்றும் ஊராட்சித் துறையை அணுகவும்.',
       'ತಮಿಳುನಾಡಿನಲ್ಲಿ ಮನೆ ಹಂಚಿಕೆ ಬೇಕಿದ್ದರೆ ಮಾತ್ರ ತಮಿಳುನಾಡು ಗ್ರಾಮೀಣಾಭಿವೃದ್ಧಿ ಮತ್ತು ಪಂಚಾಯತ್ ರಾಜ್ ಇಲಾಖೆಯನ್ನು ಸಂಪರ್ಕಿಸಿ.'), samathuvapuramUrl, 'not_eligible');
 
+  if (body.state === 'Tamil Nadu') {
+    if (body.samInterest === 'no') {
+      samathuvapuram.status = 'not_eligible'; samathuvapuram.eligible = false;
+      samathuvapuram.reason = schemeText(lang, 'You said you are not seeking a Samathuvapuram house; this is a housing allotment, not a general farmer grant.', 'சமத்துவபுரம் வீடு வேண்டாம் எனத் தெரிவித்துள்ளீர்கள்; இது வீட்டு ஒதுக்கீடு, பொதுவான விவசாயி மானியம் அல்ல.', 'ಸಮತ್ತುವಪುರಂ ಮನೆ ಬೇಡ ಎಂದು ತಿಳಿಸಿದ್ದಾರೆ; ಇದು ಮನೆ ಹಂಚಿಕೆ ಯೋಜನೆ, ಸಾಮಾನ್ಯ ರೈತ ಅನುದಾನವಲ್ಲ.');
+    } else if (body.houseRoof === 'rcc' || body.priorHousing === 'yes') {
+      samathuvapuram.status = 'not_eligible'; samathuvapuram.eligible = false;
+      samathuvapuram.reason = schemeText(lang, 'Your answer conflicts with a published exclusion (RCC-roof housing or prior government housing benefit). Confirm the current Government Order with the local Block Development Office.', 'உங்கள் பதில் வெளியிடப்பட்ட விலக்கு நிபந்தனையுடன் முரண்படுகிறது (கான்கிரீட் கூரை வீடு அல்லது முந்தைய அரசு வீட்டு நன்மை). தற்போதைய அரசாணையை வட்டார வளர்ச்சி அலுவலகத்தில் உறுதிப்படுத்தவும்.', 'ನಿಮ್ಮ ಉತ್ತರ ಪ್ರಕಟಿತ ಹೊರತಾಗುವಿಕೆ ಷರತ್ತಿಗೆ ವಿರುದ್ಧವಾಗಿದೆ (RCC ಛಾವಣಿ ಮನೆ ಅಥವಾ ಹಿಂದಿನ ಸರ್ಕಾರಿ ವಸತಿ ಸೌಲಭ್ಯ). ಪ್ರಸ್ತುತ ಸರ್ಕಾರಿ ಆದೇಶವನ್ನು ಸ್ಥಳೀಯ ಕಚೇರಿಯಲ್ಲಿ ದೃಢಪಡಿಸಿ.');
+    } else if (body.samInterest !== 'yes' || body.houseRoof === 'unsure' || body.priorHousing === 'unsure' || body.permanentStay !== 'yes') {
+      samathuvapuram.status = 'manual_review'; samathuvapuram.eligible = false;
+      samathuvapuram.reason = schemeText(lang, 'Some housing eligibility answers are missing or uncertain. The published rules also require a current local allotment and selection by the district committee.', 'வீட்டு தகுதி விவரங்களில் சில இல்லை அல்லது உறுதியில்லை. தற்போதைய உள்ளூர் ஒதுக்கீடும் மாவட்டக் குழு தேர்வும் அவசியம்.', 'ಮನೆ ಅರ್ಹತೆಯ ಕೆಲವು ಉತ್ತರಗಳು ಇಲ್ಲ ಅಥವಾ ಖಚಿತವಿಲ್ಲ. ಪ್ರಸ್ತುತ ಸ್ಥಳೀಯ ಹಂಚಿಕೆ ಮತ್ತು ಜಿಲ್ಲಾ ಸಮಿತಿಯ ಆಯ್ಕೆ ಕೂಡ ಅಗತ್ಯ.');
+    } else {
+      samathuvapuram.status = 'possible_match'; samathuvapuram.eligible = true;
+      samathuvapuram.reason = schemeText(lang, 'Your answers pass the published first screen. This is not an allotment: local availability, residence area, priority, committee selection and Collector approval still apply.', 'உங்கள் பதில்கள் வெளியிடப்பட்ட முதற்கட்ட நிபந்தனைகளைப் பூர்த்தி செய்கின்றன. இது வீடு ஒதுக்கீடு அல்ல; உள்ளூர் காலியிடம், பகுதி, முன்னுரிமை, குழுத் தேர்வு, ஆட்சியர் ஒப்புதல் தேவை.', 'ನಿಮ್ಮ ಉತ್ತರಗಳು ಪ್ರಕಟಿತ ಪ್ರಾಥಮಿಕ ಪರಿಶೀಲನೆಯನ್ನು ಪೂರೈಸುತ್ತವೆ. ಇದು ಮನೆ ಹಂಚಿಕೆ ಅಲ್ಲ; ಸ್ಥಳೀಯ ಲಭ್ಯತೆ, ವಾಸ ಪ್ರದೇಶ, ಆದ್ಯತೆ, ಸಮಿತಿ ಆಯ್ಕೆ ಮತ್ತು ಜಿಲ್ಲಾಧಿಕಾರಿ ಅನುಮೋದನೆ ಬೇಕು.');
+    }
+  }
+
   const krushak = possible('Krushak Yojana', schemeText(lang,
     'The name “Krushak Yojana” does not identify one verified active scheme for Tamil Nadu or Karnataka. Odisha has multiple distinct Krushak programmes; they should not be treated as interchangeable.',
     '“Krushak Yojana” என்ற பெயர் தமிழ்நாடு அல்லது கர்நாடகத்தில் ஒரு குறிப்பிட்ட தற்போதைய திட்டத்தை அடையாளம் காட்டவில்லை. ஒடிசாவில் பல வேறு Krushak திட்டங்கள் உள்ளன; அவற்றை ஒன்றாகக் கருத முடியாது.',
     '“Krushak Yojana” ಎಂಬ ಹೆಸರು ತಮಿಳುನಾಡು ಅಥವಾ ಕರ್ನಾಟಕದ ಒಂದು ನಿರ್ದಿಷ್ಟ ಸಕ್ರಿಯ ಯೋಜನೆಯನ್ನು ಗುರುತಿಸುವುದಿಲ್ಲ. ಒಡಿಶಾದಲ್ಲಿ ಹಲವು ವಿಭಿನ್ನ Krushak ಯೋಜನೆಗಳಿವೆ; ಅವುಗಳನ್ನು ಒಂದೇ ಎಂದು ಪರಿಗಣಿಸಬಾರದು.'), schemeText(lang,
-    'Please provide the exact scheme name and state. If you meant an Odisha programme, eligibility must be checked under that programme’s current guidelines and Odisha residency rules.',
-    'திட்டத்தின் சரியான பெயர் மற்றும் மாநிலத்தைத் தெரிவிக்கவும். ஒடிசா திட்டத்தை குறித்திருந்தால் அதன் தற்போதைய வழிகாட்டுதல்கள் மற்றும் ஒடிசா குடியிருப்பு நிபந்தனைகளின் அடிப்படையில் சரிபார்க்க வேண்டும்.',
-    'ಯೋಜನೆಯ ನಿಖರ ಹೆಸರು ಮತ್ತು ರಾಜ್ಯವನ್ನು ತಿಳಿಸಿ. ಒಡಿಶಾ ಯೋಜನೆಯನ್ನು ಉದ್ದೇಶಿಸಿದ್ದರೆ ಅದರ ಪ್ರಸ್ತುತ ಮಾರ್ಗಸೂಚಿ ಮತ್ತು ಒಡಿಶಾ ನಿವಾಸ ನಿಯಮಗಳ ಪ್ರಕಾರ ಪರಿಶೀಲಿಸಬೇಕು.'), krushakUrl, 'manual_review');
+    'This is not a verified Tamil Nadu or Karnataka scheme. If you meant Odisha CM-KISAN or another programme in Krushak Odisha, select the exact programme and verify Odisha residency and current rules on the portal.',
+    'இது தமிழ்நாடு அல்லது கர்நாடகத்தின் உறுதிப்படுத்தப்பட்ட திட்டம் அல்ல. ஒடிசா CM-KISAN அல்லது Krushak Odisha திட்டத்தை குறித்தால் சரியான திட்டத்தைத் தேர்ந்து ஒடிசா குடியிருப்பு மற்றும் தற்போதைய விதிகளைப் பார்க்கவும்.',
+    'ಇದು ತಮಿಳುನಾಡು ಅಥವಾ ಕರ್ನಾಟಕದ ದೃಢೀಕೃತ ಯೋಜನೆಯಲ್ಲ. ಒಡಿಶಾ CM-KISAN ಅಥವಾ Krushak Odisha ಯೋಜನೆ ಎಂದಿದ್ದರೆ ನಿಖರ ಯೋಜನೆ, ಒಡಿಶಾ ನಿವಾಸ ಮತ್ತು ಪ್ರಸ್ತುತ ನಿಯಮಗಳನ್ನು ಪರಿಶೀಲಿಸಿ.'), krushakUrl, body.state === 'Tamil Nadu' || body.state === 'Karnataka' ? 'not_eligible' : 'manual_review');
 
-  return { mode: 'rules-screening', matches: [possible('PM-KISAN', pmReason, pmAction, pmkisanUrl, pmStatus), samathuvapuram, krushak], checkedAt: rulesCheckedAt };
+  let uzhavar = null;
+  if (body.state === 'Tamil Nadu') {
+    let status = 'manual_review';
+    let reason = schemeText(lang, 'Uzhavar Pathukappu covers specified small/marginal farmers (including tenants) and agricultural labourers aged 18–65; the full category and land limits must be confirmed.', 'உழவர் பாதுகாப்புத் திட்டம் 18–65 வயதுடைய குறிப்பிட்ட சிறு/குறு விவசாயிகள் (குத்தகை உட்பட) மற்றும் விவசாயத் தொழிலாளர்களுக்கானது; முழு வகை, நில வரம்பை உறுதிப்படுத்த வேண்டும்.', 'ಉಳುವರ್ ಪಾತುಕಾಪ್ಪು 18–65 ವರ್ಷದ ನಿರ್ದಿಷ್ಟ ಸಣ್ಣ/ಅತಿಸಣ್ಣ ರೈತರು (ಗುತ್ತಿಗೆದಾರರು ಸೇರಿ) ಮತ್ತು ಕೃಷಿ ಕಾರ್ಮಿಕರಿಗೆ; ವರ್ಗ ಹಾಗೂ ಭೂ ಮಿತಿಯನ್ನು ದೃಢಪಡಿಸಬೇಕು.');
+    if (body.ageBand === 'under18' || body.ageBand === 'over65' || body.farmerType === 'other' || (body.farmerType === 'cultivator' && body.safetyLand === 'no')) {
+      status = 'not_eligible';
+      reason = schemeText(lang, 'Your answers do not meet the published age, worker-category or land-limit screen for this scheme.', 'இந்தத் திட்டத்தின் வெளியிடப்பட்ட வயது, தொழில் வகை அல்லது நில அளவு முதற்கட்ட நிபந்தனைகளை உங்கள் பதில்கள் பூர்த்தி செய்யவில்லை.', 'ನಿಮ್ಮ ಉತ್ತರಗಳು ಪ್ರಕಟಿತ ವಯಸ್ಸು, ಕೆಲಸದ ವರ್ಗ ಅಥವಾ ಭೂ ಮಿತಿ ಪ್ರಾಥಮಿಕ ಷರತ್ತನ್ನು ಪೂರೈಸುವುದಿಲ್ಲ.');
+    } else if (['18to65'].includes(body.ageBand) && ['cultivator', 'tenant', 'agri_labour'].includes(body.farmerType) && (body.farmerType === 'agri_labour' || body.safetyLand === 'yes' || body.safetyLand === 'not_applicable')) {
+      status = 'possible_match';
+      reason = schemeText(lang, 'Your answers appear to meet the first screen for age and worker category. Confirm membership, land details and current benefits with the Revenue Department.', 'வயது மற்றும் தொழில் வகை முதற்கட்ட நிபந்தனைகளை பூர்த்தி செய்யலாம். வருவாய்த் துறையில் உறுப்பினர் நிலை, நில விவரங்கள், தற்போதைய நன்மைகளை உறுதிப்படுத்தவும்.', 'ವಯಸ್ಸು ಮತ್ತು ಕೆಲಸದ ವರ್ಗದ ಪ್ರಾಥಮಿಕ ಷರತ್ತುಗಳನ್ನು ಪೂರೈಸುವ ಸಾಧ್ಯತೆ ಇದೆ. ಸದಸ್ಯತ್ವ, ಭೂ ವಿವರ ಮತ್ತು ಪ್ರಸ್ತುತ ಸೌಲಭ್ಯಗಳನ್ನು ಕಂದಾಯ ಇಲಾಖೆಯಲ್ಲಿ ದೃಢಪಡಿಸಿ.');
+    }
+    uzhavar = possible('Chief Minister’s Uzhavar Pathukappu Thittam', reason, schemeText(lang, 'Ask the Village Administrative Officer / Taluk Revenue Office about membership or benefits; bring land/tenancy or agricultural-labour proof and age proof.', 'உறுப்பினர் சேர்க்கை அல்லது நன்மைக்கு VAO / வட்டாட்சியர் அலுவலகத்தை அணுகி நிலம்/குத்தகை அல்லது விவசாயத் தொழில் மற்றும் வயது ஆதாரங்களை எடுத்துச் செல்லவும்.', 'ಸದಸ್ಯತ್ವ ಅಥವಾ ಸೌಲಭ್ಯಕ್ಕಾಗಿ ಗ್ರಾಮ ಆಡಳಿತಾಧಿಕಾರಿ / ತಾಲ್ಲೂಕು ಕಂದಾಯ ಕಚೇರಿಯನ್ನು ಸಂಪರ್ಕಿಸಿ; ಭೂಮಿ/ಗುತ್ತಿಗೆ ಅಥವಾ ಕೃಷಿ ಕೆಲಸ ಮತ್ತು ವಯಸ್ಸಿನ ದಾಖಲೆ ತೆಗೆದುಕೊಂಡು ಹೋಗಿ.'), 'https://landreforms.tn.gov.in/UPT.html', status);
+  }
+
+  const statePortal = body.state === 'Tamil Nadu'
+    ? possible('Tamil Nadu Agriculture scheme directory (AGRISNET)', schemeText(lang, 'State agriculture input subsidies vary by crop, district, season, category and open application window; this portal publishes scheme eligibility and required documents.', 'மாநில வேளாண் இடுபொருள் மானியங்கள் பயிர், மாவட்டம், பருவம், வகை, விண்ணப்ப காலத்தைப் பொறுத்தவை; AGRISNET தகுதி மற்றும் ஆவணங்களைப் பட்டியலிடுகிறது.', 'ರಾಜ್ಯ ಕೃಷಿ ಒಳಿತಿನ ಸಬ್ಸಿಡಿಗಳು ಬೆಳೆ, ಜಿಲ್ಲೆ, ಋತು, ವರ್ಗ ಮತ್ತು ಅರ್ಜಿ ಅವಧಿಯಂತೆ ಬದಲಾಗುತ್ತವೆ; AGRISNET ಅರ್ಹತೆ ಮತ್ತು ದಾಖಲೆಗಳನ್ನು ತೋರಿಸುತ್ತದೆ.'), schemeText(lang, 'Choose your crop/input on the portal or ask the Block Agriculture Officer; exact eligibility cannot be screened without the current component and district.', 'தற்போதைய கூறு மற்றும் மாவட்ட விவரமின்றி துல்லியத் தகுதியைச் சரிபார்க்க முடியாது; பயிர்/இடுபொருளைத் தேர்வு செய்யவும் அல்லது வட்டார வேளாண் அலுவலரை அணுகவும்.', 'ಪ್ರಸ್ತುತ ಘಟಕ ಮತ್ತು ಜಿಲ್ಲೆ ಇಲ್ಲದೆ ನಿಖರ ಅರ್ಹತೆ ಪರಿಶೀಲಿಸಲಾಗದು; ಬೆಳೆ/ಒಳಿತಿನ ಆಯ್ಕೆ ಮಾಡಿ ಅಥವಾ ಬ್ಲಾಕ್ ಕೃಷಿ ಅಧಿಕಾರಿಯನ್ನು ಸಂಪರ್ಕಿಸಿ.'), 'https://www.tnagrisnet.tn.gov.in/home/schemes/tm', 'manual_review')
+    : possible('Karnataka Department of Agriculture (Raitamitra)', schemeText(lang, 'Use the Karnataka Agriculture portal to identify current state and central benefit components; rules and application windows differ by programme.', 'தற்போதைய கர்நாடக மாநில/மத்திய திட்டங்களை வேளாண் துறை தளத்தில் தேர்வு செய்யவும்; ஒவ்வொரு திட்டத்திற்கும் விதி, விண்ணப்ப காலம் மாறும்.', 'ಪ್ರಸ್ತುತ ಕರ್ನಾಟಕ ರಾಜ್ಯ/ಕೇಂದ್ರ ಯೋಜನೆಗಳನ್ನು ಕೃಷಿ ಇಲಾಖೆಯ ಪೋರ್ಟಲ್‌ನಲ್ಲಿ ಆಯ್ಕೆಮಾಡಿ; ನಿಯಮ ಮತ್ತು ಅರ್ಜಿ ಅವಧಿ ಪ್ರತಿ ಯೋಜನೆಗೆ ಬದಲಾಗುತ್ತದೆ.'), schemeText(lang, 'Select the exact benefit and district on Raitamitra or contact the Raitha Samparka Kendra; do not treat portal registration as approval.', 'Raitamitra-வில் சரியான நன்மை, மாவட்டத்தைத் தேர்வு செய்யவும் அல்லது ರೈತ ಸಂಪರ್ಕ ಕೇಂದ್ರத்தை அணுகவும்; பதிவு ஒப்புதல் அல்ல.', 'Raitamitra ನಲ್ಲಿ ನಿಖರ ಸೌಲಭ್ಯ ಮತ್ತು ಜಿಲ್ಲೆಯನ್ನು ಆಯ್ಕೆಮಾಡಿ ಅಥವಾ ರೈತ ಸಂಪರ್ಕ ಕೇಂದ್ರವನ್ನು ಸಂಪರ್ಕಿಸಿ; ನೋಂದಣಿ ಅನುಮೋದನೆ ಅಲ್ಲ.'), 'https://raitamitra.karnataka.gov.in/', 'manual_review');
+
+  const pmChecks = [
+    ['Land records', body.landholding === 'own' ? 'pass' : body.landholding === 'unsure' ? 'review' : 'fail'],
+    ['Exclusion categories', body.exclusions === 'no' ? 'pass' : body.exclusions === 'yes' ? 'fail' : 'review'],
+    ['Land cutoff / succession', body.landAcquisition === 'before' ? 'pass' : 'review'],
+    ['One beneficiary per family', body.familyBenefit === 'no' ? 'pass' : 'review'],
+    ['eKYC and bank/DBT readiness', body.aadhaarLinkedBankAccount === 'yes' ? 'pass' : body.aadhaarLinkedBankAccount === 'no' ? 'pending' : 'review']
+  ];
+  const checkText = { pass: ['Meets screen', 'முதற்கட்டத்தில் பொருந்துகிறது', 'ಪ್ರಾಥಮಿಕವಾಗಿ ಹೊಂದುತ್ತದೆ'], fail: ['Does not meet', 'பொருந்தவில்லை', 'ಹೊಂದುವುದಿಲ್ಲ'], review: ['Needs verification', 'சரிபார்ப்பு தேவை', 'ಪರಿಶೀಲನೆ ಅಗತ್ಯ'], pending: ['Follow-up needed', 'தொடர்பு நடவடிக்கை தேவை', 'ಮುಂದಿನ ಕ್ರಮ ಅಗತ್ಯ'] };
+  const makeChecks = rows => rows.map(([label, status]) => ({ label, status, result: schemeText(lang, ...checkText[status]) }));
+  const pmKisan = possible('PM-KISAN', pmReason, pmAction, pmkisanUrl, pmStatus);
+  pmKisan.checks = makeChecks(pmChecks);
+  samathuvapuram.checks = makeChecks(body.state === 'Tamil Nadu' ? [
+    ['Tamil Nadu programme / interest', body.samInterest === 'yes' ? 'pass' : body.samInterest === 'no' ? 'fail' : 'review'],
+    ['RCC roof / prior government housing', body.houseRoof === 'rcc' || body.priorHousing === 'yes' ? 'fail' : body.houseRoof === 'unsure' || body.priorHousing === 'unsure' ? 'review' : 'pass'],
+    ['Housing priority information (2023 Government Order)', body.housingPriority === 'yes' || body.housingLand === 'no' ? 'pass' : body.housingPriority === 'no' && body.housingLand === 'yes' ? 'pending' : 'review'],
+    ['Location and permanent residence', body.district && body.permanentStay === 'yes' ? 'pass' : body.permanentStay === 'no' ? 'fail' : 'review'],
+    ['Current local opening, priority and Collector approval', 'review']
+  ] : [['Tamil Nadu programme jurisdiction', 'fail']]);
+  if (uzhavar) uzhavar.checks = makeChecks([
+    ['Age 18–65', body.ageBand === '18to65' ? 'pass' : ['under18', 'over65'].includes(body.ageBand) ? 'fail' : 'review'],
+    ['Farmer / tenant / agricultural labour category', ['cultivator', 'tenant', 'agri_labour'].includes(body.farmerType) ? 'pass' : body.farmerType === 'other' ? 'fail' : 'review'],
+    ['Applicable land limit / direct cultivation', body.farmerType === 'agri_labour' || ['yes', 'not_applicable'].includes(body.safetyLand) ? 'pass' : body.safetyLand === 'no' ? 'fail' : 'review'],
+    ['Membership and current benefit confirmation', 'review']
+  ]);
+  return { mode: 'rules-screening', matches: [pmKisan, samathuvapuram, ...(uzhavar ? [uzhavar] : []), krushak, statePortal], checkedAt: rulesCheckedAt, disclaimer: schemeText(lang, 'Pre-screen only: no live land-record lookup, portal submission or government decision. Confirm current rules and application windows with the linked department.', 'முதற்கட்டச் சரிபார்ப்பு மட்டுமே: நிலப் பதிவு நேரடி தேடல், விண்ணப்பச் சமர்ப்பிப்பு அல்லது அரசு முடிவு இங்கு இல்லை. இணைக்கப்பட்ட துறையில் தற்போதைய விதி/காலத்தை உறுதிப்படுத்தவும்.', 'ಪ್ರಾಥಮಿಕ ಪರಿಶೀಲನೆ ಮಾತ್ರ: ನೇರ ಭೂ ದಾಖಲೆ ಹುಡುಕಾಟ, ಅರ್ಜಿ ಸಲ್ಲಿಕೆ ಅಥವಾ ಸರ್ಕಾರಿ ತೀರ್ಮಾನ ಇಲ್ಲಿ ಇಲ್ಲ. ಲಿಂಕ್ ಮಾಡಿದ ಇಲಾಖೆಯಲ್ಲಿ ಪ್ರಸ್ತುತ ನಿಯಮ/ಅವಧಿ ದೃಢಪಡಿಸಿ.') };
 }
 
 async function handle(req, res) {
