@@ -329,35 +329,61 @@ document.getElementById('editAnswers').addEventListener('click', () => {
   document.getElementById('progressBar').style.width = '50%';
 });
 
-document.getElementById('grievanceForm').addEventListener('submit', async event => {
+const grievancePortals = {
+  state(state) {
+    return state === 'Tamil Nadu'
+      ? { label: 'Tamil Nadu CM Helpline', url: 'https://cmhelpline.tnega.org/portal/en/home', note: 'Statewide public grievance portal; choose the responsible department.' }
+      : { label: 'Karnataka Janaspandana (iPGRS)', url: 'https://ipgrs.karnataka.gov.in/', note: 'Karnataka’s public grievance system; choose the relevant department or service.' };
+  },
+  forIssue(category, state) {
+    const links = [];
+    if (category === 'Crop damage / insurance') links.push({ label: 'PM Fasal Bima Yojana (PMFBY)', url: 'https://pmfby.gov.in/', note: 'Report crop loss or raise a crop insurance query. Helpline: 14447.' });
+    if (category === 'Scheme payment not received') links.push({ label: 'PM-KISAN grievance form', url: 'https://www.pmkisan.gov.in/Grievance.aspx', note: 'Use this for PM-KISAN registration, installment or beneficiary issues.' });
+    links.push(grievancePortals.state(state));
+    links.push({ label: 'CPGRAMS — Central Government grievance portal', url: 'https://pgportal.gov.in/', note: 'For a Central Government department, or escalation where appropriate.' });
+    return links;
+  }
+};
+
+function renderDepartmentLinks(target, category, state) {
+  const links = grievancePortals.forIssue(category, state);
+  target.innerHTML = `<b>Suggested official filing portals</b><p>Choose the portal that matches your issue. Your description is not sent automatically.</p><div class="department-link-list">${links.map(link => `<a class="department-link" href="${link.url}" target="_blank" rel="noopener noreferrer"><span><b>${escapeHtml(link.label)}</b><small>${escapeHtml(link.note)}</small></span><span aria-hidden="true">↗</span></a>`).join('')}</div>`;
+}
+
+const departmentRouting = document.getElementById('departmentRouting');
+const issueCategory = document.getElementById('issueCategory');
+const grievanceState = document.getElementById('grievanceState');
+const updateDepartmentRouting = () => renderDepartmentLinks(departmentRouting, issueCategory.value, grievanceState.value);
+issueCategory.addEventListener('change', updateDepartmentRouting);
+grievanceState.addEventListener('change', updateDepartmentRouting);
+updateDepartmentRouting();
+
+document.getElementById('grievanceForm').addEventListener('submit', event => {
   event.preventDefault();
   if (!document.getElementById('consent').checked) return;
-  const caseId = `NL-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-  const payload = { category: document.getElementById('issueCategory').value, description: document.getElementById('issueText').value, village: document.getElementById('village').value, language: document.getElementById('language').value, consent: true };
-  let status = 'Received · Demo reference';
-  try {
-    const response = await fetch(`${API_BASE}/grievances`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (response.ok) { const data = await response.json(); payload.caseId = data.id || data.caseId; status = data.demo ? 'Demo reference stored locally; not sent to a department' : 'Submitted to the connected grievance service'; }
-  } catch (_) { /* Demo case only; no authority receives this submission. */ }
-  const id = payload.caseId || caseId;
+  const category = issueCategory.value;
+  const state = grievanceState.value;
+  const description = document.getElementById('issueText').value.trim();
+  const village = document.getElementById('village').value.trim();
   document.getElementById('grievanceFormWrap').hidden = true;
   const success = document.getElementById('grievanceSuccess');
   success.hidden = false;
   success.className = 'grievance-success';
-  success.innerHTML = `<div class="result-mark">✓</div><h2>Grievance recorded</h2><p>This is a ${escapeHtml(status.toLowerCase())} in the prototype. A live deployment must connect the grievance service to the relevant department.</p><div class="case-id">Reference ID &nbsp; <b>${escapeHtml(id)}</b></div><button class="outline-button" type="button" id="anotherGrievance">＋ Raise another issue</button>`;
-  success.querySelector('#anotherGrievance').addEventListener('click', () => { success.hidden = true; document.getElementById('grievanceFormWrap').hidden = false; document.getElementById('grievanceForm').reset(); });
-  document.getElementById('trackId').value = id;
-  addActivity('Grievance recorded', id);
+  const links = grievancePortals.forIssue(category, state);
+  const summary = `${category}\nState: ${state}\nVillage / town: ${village}\n\nIssue details:\n${description}`;
+  success.innerHTML = `<div class="result-mark">↗</div><h2>Continue to an official portal</h2><p>No government filing has been made and no reference ID has been created. Copy your summary, open the appropriate portal, and submit the complaint there. The department will issue its own tracking ID.</p><div class="department-link-list">${links.map(link => `<a class="department-link" href="${link.url}" target="_blank" rel="noopener noreferrer"><span><b>${escapeHtml(link.label)}</b><small>${escapeHtml(link.note)}</small></span><span aria-hidden="true">↗</span></a>`).join('')}</div><button class="outline-button" type="button" id="copyGrievanceSummary">Copy issue summary</button> <button class="outline-button" type="button" id="anotherGrievance">＋ Start again</button><small class="copy-status" id="copySummaryStatus" aria-live="polite"></small>`;
+  success.querySelector('#copyGrievanceSummary').addEventListener('click', async () => {
+    const status = success.querySelector('#copySummaryStatus');
+    try { await navigator.clipboard.writeText(summary); status.textContent = 'Summary copied. Paste it into the government portal form.'; }
+    catch { status.textContent = 'Clipboard unavailable. Select and copy your issue details from the form before opening a portal.'; }
+  });
+  success.querySelector('#anotherGrievance').addEventListener('click', () => { success.hidden = true; document.getElementById('grievanceFormWrap').hidden = false; document.getElementById('grievanceForm').reset(); issueCategory.value = 'Crop damage / insurance'; grievanceState.value = 'Karnataka'; updateDepartmentRouting(); });
 });
 
 document.getElementById('trackForm').addEventListener('submit', async event => {
   event.preventDefault();
   const id = document.getElementById('trackId').value.trim();
-  let message = 'No live grievance system is connected. This reference can be tracked after the department grievance API is configured.';
-  try {
-    const response = await fetch(`${API_BASE}/grievances/${encodeURIComponent(id)}`);
-    if (response.ok) { const item = await response.json(); message = `Status: ${item.status || 'In progress'} · Updated ${item.updatedAt ? new Date(item.updatedAt).toLocaleString() : 'recently'}${item.demo ? ' · Demo record' : ''}`; }
-  } catch (_) { /* Keep the local demo explanation. */ }
+  const message = 'The app cannot fetch government case status yet. Open the government portal where you filed and use its Check Status option with your official reference ID.';
   document.getElementById('trackResult').innerHTML = `<div class="tip"><b>${escapeHtml(id)}</b><p>${escapeHtml(message)}</p></div>`;
 });
 
