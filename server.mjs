@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const dataPath = join(root, 'data', 'demo-store.json');
 const port = Number(process.env.PORT || 4173);
 const maxBodyBytes = 12 * 1024 * 1024;
-const db = { grievances: [], eligibilityChecks: [], conversations: [], farmerProfiles: {} };
+const db = { grievances: [], eligibilityChecks: [], conversations: [], farmerProfiles: {}, farmerGrievanceTracking: [] };
 const ivrStatus = {
   active: Boolean(process.env.SARVAM_API_SUBSCRIPTION_KEY && process.env.IVR_STREAM_TOKEN && process.env.PUBLIC_WSS_URL && (process.env.IVR_ADAPTER_URL || process.env.SARVAM_ADAPTER_URL)),
   hasSarvamKey: Boolean(process.env.SARVAM_API_SUBSCRIPTION_KEY),
@@ -32,12 +32,26 @@ if (process.env.DATABASE_URL) {
     const { Pool } = await import('pg');
     profilePool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined });
     await profilePool.query(`CREATE TABLE IF NOT EXISTS farmer_profiles (user_id TEXT PRIMARY KEY, preferences JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+    await profilePool.query(`CREATE TABLE IF NOT EXISTS farmer_grievance_tracking (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, farmer_id TEXT NOT NULL, state TEXT NOT NULL, category TEXT NOT NULL, authority_level TEXT NOT NULL, portal TEXT NOT NULL, portal_url TEXT NOT NULL, tracking_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'submitted', filed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   } catch (error) {
     console.error('Profile database initialization failed. Check DATABASE_URL and database availability.');
     profilePool = null;
   }
 }
 const profileStorage = () => profilePool ? 'postgres' : 'local-demo';
+function farmerTrackingId(phone) {
+  const secret = process.env.USER_ID_SECRET || process.env.MEM0_USER_ID_SECRET || process.env.MEM0_API_KEY || process.env.DATABASE_URL;
+  if (!secret) return null;
+  return createHmac('sha256', secret).update(phone).digest('hex');
+}
+
+const trackingPortals = {
+  'Tamil Nadu CM Helpline': 'cmhelpline.tnega.org',
+  'Karnataka Janaspandana (iPGRS)': 'ipgrs.karnataka.gov.in',
+  'PM Fasal Bima Yojana (PMFBY)': 'pmfby.gov.in',
+  'PM-KISAN grievance form': 'pmkisan.gov.in',
+  'CPGRAMS': 'pgportal.gov.in'
+};
 
 async function persist() {
   writeQueue = writeQueue.then(() => writeFile(dataPath, JSON.stringify(db, null, 2), 'utf8'));
@@ -130,6 +144,39 @@ async function saveFarmerProfile(userId, preferences) {
   return profile;
 }
 
+async function listGrievanceTracking(farmerId) {
+  if (profilePool) {
+    try {
+      const { rows } = await profilePool.query('SELECT id, case_id AS "caseId", state, category, authority_level AS "authorityLevel", portal, portal_url AS "portalUrl", tracking_id AS "trackingId", status, filed_at AS "filedAt", updated_at AS "updatedAt" FROM farmer_grievance_tracking WHERE farmer_id = $1 ORDER BY filed_at DESC', [farmerId]);
+      return rows;
+    } catch { throw Object.assign(new Error('Grievance tracking database is unavailable.'), { status: 503 }); }
+  }
+  return db.farmerGrievanceTracking.filter(item => item.farmerId === farmerId).sort((a,b) => b.filedAt.localeCompare(a.filedAt)).map(({ farmerId: _farmerId, ...safe }) => safe);
+}
+async function saveGrievanceTracking(item) {
+  if (profilePool) {
+    try {
+      const { rows } = await profilePool.query('INSERT INTO farmer_grievance_tracking (id, case_id, farmer_id, state, category, authority_level, portal, portal_url, tracking_id, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, case_id AS "caseId", state, category, authority_level AS "authorityLevel", portal, portal_url AS "portalUrl", tracking_id AS "trackingId", status, filed_at AS "filedAt", updated_at AS "updatedAt"', [item.id,item.caseId,item.farmerId,item.state,item.category,item.authorityLevel,item.portal,item.portalUrl,item.trackingId,item.status]);
+      return rows[0];
+    } catch { throw Object.assign(new Error('Grievance tracking database is unavailable.'), { status: 503 }); }
+  }
+  const stored = { ...item, filedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  db.farmerGrievanceTracking.push(stored); await persist();
+  const { farmerId: _farmerId, ...safe } = stored;
+  return safe;
+}
+async function updateGrievanceTracking(id, farmerId, status) {
+  if (profilePool) {
+    try {
+      const { rows } = await profilePool.query('UPDATE farmer_grievance_tracking SET status=$3, updated_at=NOW() WHERE id=$1 AND farmer_id=$2 RETURNING id', [id, farmerId, status]);
+      return rows.length > 0;
+    } catch { throw Object.assign(new Error('Grievance tracking database is unavailable.'), { status: 503 }); }
+  }
+  const item = db.farmerGrievanceTracking.find(entry => entry.id === id && entry.farmerId === farmerId);
+  if (!item) return false;
+  item.status = status; item.updatedAt = new Date().toISOString(); await persist(); return true;
+}
+
 async function saveChatMemory(memory, body, reply) {
   if (!memory.userId) return false;
   try {
@@ -220,6 +267,36 @@ async function handle(req, res) {
 
   if (req.method === 'GET' && pathname === '/api/memory/status') return send(res, 200, { configured: isMem0Configured(), provider: 'mem0', scope: 'phone-linked-user', requiresPhone: true });
   if (req.method === 'GET' && pathname === '/api/profile/status') return send(res, 200, { configured: Boolean(profilePool), storage: profileStorage(), durable: Boolean(profilePool), phoneVerification: 'not-configured' });
+  if (req.method === 'GET' && pathname === '/api/grievance-tracking') {
+    const phone = normalizePhoneNumber(req.headers['x-farmer-phone']);
+    const farmerId = phone && farmerTrackingId(phone);
+    if (!farmerId) return send(res, 400, { error: 'Enter a valid phone number to find saved grievances.' });
+    return send(res, 200, { grievances: await listGrievanceTracking(farmerId), storage: profileStorage(), phoneVerification: 'not-configured', liveGovernmentStatus: false });
+  }
+  if (req.method === 'POST' && pathname === '/api/grievance-tracking') {
+    const body = await jsonBody(req);
+    const phone = normalizePhoneNumber(body.phoneNumber);
+    const farmerId = phone && farmerTrackingId(phone);
+    if (!farmerId) return send(res, 400, { error: 'A valid phone number is required.' });
+    if (body.consent !== true) return send(res, 400, { error: 'Consent is required to save a portal tracking ID.' });
+    const portalHost = trackingPortals[body.portal];
+    let parsedUrl;
+    try { parsedUrl = new URL(body.portalUrl); } catch {}
+    if (!portalHost || parsedUrl?.protocol !== 'https:' || parsedUrl.hostname !== portalHost) return send(res, 400, { error: 'Choose a listed official grievance portal.' });
+    if (!['Tamil Nadu','Karnataka'].includes(body.state) || !['local','higher'].includes(body.authorityLevel) || !['submitted','in_progress','unresolved','resolved'].includes(body.status) || !body.category?.trim() || !body.trackingId?.trim()) return send(res, 400, { error: 'Complete the grievance tracking details.' });
+    const item = { id: randomUUID(), caseId: typeof body.caseId === 'string' && /^[0-9a-f-]{36}$/i.test(body.caseId) ? body.caseId : randomUUID(), farmerId, state: body.state, category: body.category.trim().slice(0,100), authorityLevel: body.authorityLevel, portal: body.portal, portalUrl: parsedUrl.href, trackingId: body.trackingId.trim().slice(0,120), status: body.status };
+    return send(res, 201, { grievance: await saveGrievanceTracking(item), storage: profileStorage() });
+  }
+  if (req.method === 'PUT' && pathname.startsWith('/api/grievance-tracking/')) {
+    const id = pathname.slice('/api/grievance-tracking/'.length);
+    const body = await jsonBody(req);
+    const phone = normalizePhoneNumber(body.phoneNumber);
+    const farmerId = phone && farmerTrackingId(phone);
+    if (!farmerId) return send(res, 400, { error: 'A valid phone number is required.' });
+    if (!['submitted','in_progress','unresolved','resolved'].includes(body.status)) return send(res, 400, { error: 'Choose a valid status.' });
+    if (!await updateGrievanceTracking(id, farmerId, body.status)) return send(res, 404, { error: 'Saved grievance not found for this phone number.' });
+    return send(res, 200, { updated: true });
+  }
   if (req.method === 'GET' && pathname === '/api/profile') {
     const phone = normalizePhoneNumber(req.headers['x-farmer-phone']);
     const userId = phone && mem0UserIdForPhone(phone);
@@ -258,22 +335,31 @@ async function handle(req, res) {
   if (req.method === 'POST' && pathname === '/api/crop/advisory') {
     const body = await jsonBody(req);
     const memory = await loadChatMemory(body);
+    const normalizedPhone = normalizePhoneNumber(body.phoneNumber);
+    const farmerId = normalizedPhone && farmerTrackingId(normalizedPhone);
+    const grievanceRecords = farmerId ? await listGrievanceTracking(farmerId) : [];
+    const grievanceContext = grievanceRecords.map(({ caseId, state, category, authorityLevel, portal, portalUrl, trackingId, status, updatedAt }) => ({ caseId, state, category, authorityLevel, portal, portalUrl, trackingId, status, updatedAt }));
     const { phoneNumber: _phoneNumber, ...safeBody } = body;
-    const base = { ...safeBody, channel: 'web-demo', memoryContext: memory.summaries };
+    const base = { ...safeBody, channel: 'web-demo', memoryContext: memory.summaries, grievanceContext };
     const [knowledge, weather, dss] = await Promise.all([
       callAdapter(process.env.KNOWLEDGE_ADAPTER_URL, 'crop-advisory', base),
       /weather|rain|மழை|மழை|ಮಳೆ/i.test(body.message || '') ? callAdapter(process.env.WEATHER_ADAPTER_URL, 'forecast', base) : null,
       /yield|optim|விளைச்சல்|இಳುವರಿ/i.test(body.message || '') ? callAdapter(process.env.DSS_ADAPTER_URL, 'crop-recommendation', base) : null
     ]);
     const speechAnswer = await callAdapter(process.env.SARVAM_ADAPTER_URL, 'conversation', { ...base, knowledgeContext: knowledge?.context || knowledge?.results, weatherContext: weather, dssContext: dss });
-    const reply = speechAnswer?.reply || dss?.reply || weather?.reply || knowledge?.reply || localized(body.language,
+    const asksGrievance = /griev|complaint|status|track|follow.?up|புகார்|நிலை|கண்காணி|ದೂರು|ಸ್ಥಿತಿ|ಪರಿಶೀಲನೆ/i.test(body.message || '');
+    const savedGrievanceReply = asksGrievance && grievanceContext.length ? localized(body.language,
+      `Your saved grievance references are: ${grievanceContext.map(item => `${item.portal}: ${item.trackingId} (${item.status.replace('_',' ')})`).join('; ')}. Open the original portal to check the live status.`,
+      `சேமித்த புகார் குறிப்பு எண்கள்: ${grievanceContext.map(item => `${item.portal}: ${item.trackingId} (${item.status.replace('_',' ')})`).join('; ')}. தற்போதைய நிலையை அசல் அரசு தளத்தில் சரிபார்க்கவும்.`,
+      `ನಿಮ್ಮ ಉಳಿಸಿದ ದೂರು ಉಲ್ಲೇಖಗಳು: ${grievanceContext.map(item => `${item.portal}: ${item.trackingId} (${item.status.replace('_',' ')})`).join('; ')}. ನೈಜ ಸ್ಥಿತಿಯನ್ನು ಮೂಲ ಸರ್ಕಾರಿ ಪೋರ್ಟಲ್‌ನಲ್ಲಿ ಪರಿಶೀಲಿಸಿ.`) : null;
+    const reply = speechAnswer?.reply || dss?.reply || weather?.reply || knowledge?.reply || savedGrievanceReply || localized(body.language,
       'Demo response: add Sarvam Conversational AI, Knowledge Engine, live weather and DSS adapters for grounded farm guidance.',
       'மாதிரி பதில்: துல்லியமான பண்ணை ஆலோசனைக்கு சர்வம், நேரடி வானிலை மற்றும் DSS இணைப்புகளை அமைக்கவும்.',
       'ಮಾದರಿ ಉತ್ತರ: ನಿಖರ ಕೃಷಿ ಸಲಹೆಗಾಗಿ ಸರ್ವಂ, ನೈಜ ಹವಾಮಾನ ಮತ್ತು DSS ಸಂಪರ್ಕಗಳನ್ನು ಹೊಂದಿಸಿ.');
     const memoryStored = await saveChatMemory(memory, body, reply);
     const record = { id: randomUUID(), message: body.message || '', language: body.language || 'ta', createdAt: new Date().toISOString(), source: speechAnswer ? 'sarvam-adapter' : knowledge ? 'knowledge-engine' : 'demo' };
     db.conversations.unshift(record); db.conversations.length = Math.min(db.conversations.length, 500); await persist();
-    return send(res, 200, { reply, language: body.language || 'ta', sources: speechAnswer?.sources || knowledge?.sources || dss?.sources || [], weather: weather || undefined, dssRecommendation: dss || undefined, memory: { available: isMem0Configured(), requested: body.rememberChat === true, saved: memoryStored, recalled: memory.summaries.length, phoneRequired: body.rememberChat === true && !memory.userId }, mode: speechAnswer || knowledge || weather || dss ? 'connected-adapter' : 'demo' });
+    return send(res, 200, { reply, language: body.language || 'ta', sources: speechAnswer?.sources || knowledge?.sources || dss?.sources || [], weather: weather || undefined, dssRecommendation: dss || undefined, memory: { available: isMem0Configured(), requested: body.rememberChat === true, saved: memoryStored, recalled: memory.summaries.length, phoneRequired: body.rememberChat === true && !memory.userId }, grievanceTracking: grievanceContext, mode: speechAnswer || knowledge || weather || dss ? 'connected-adapter' : 'demo' });
   }
 
   if (req.method === 'POST' && pathname === '/api/crop/voice') {

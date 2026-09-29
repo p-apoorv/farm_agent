@@ -337,13 +337,40 @@ const grievancePortals = {
   },
   forIssue(category, state) {
     const links = [];
+    links.push({ ...grievancePortals.state(state), note: `${grievancePortals.state(state).note} Start here first. Tamil Nadu follow-up: use the one-time appeal/reopen option or call 1100. Karnataka follow-up: check Janaspandana or call 1902.` });
     if (category === 'Crop damage / insurance') links.push({ label: 'PM Fasal Bima Yojana (PMFBY)', url: 'https://pmfby.gov.in/', note: 'Report crop loss or raise a crop insurance query. Helpline: 14447.' });
     if (category === 'Scheme payment not received') links.push({ label: 'PM-KISAN grievance form', url: 'https://www.pmkisan.gov.in/Grievance.aspx', note: 'Use this for PM-KISAN registration, installment or beneficiary issues.' });
-    links.push(grievancePortals.state(state));
     links.push({ label: 'CPGRAMS — Central Government grievance portal', url: 'https://pgportal.gov.in/', note: 'For a Central Government department, or escalation where appropriate.' });
     return links;
   }
 };
+
+const trackingPortalOptions = {
+  'Tamil Nadu CM Helpline': 'https://cmhelpline.tnega.org/portal/en/home',
+  'Karnataka Janaspandana (iPGRS)': 'https://ipgrs.karnataka.gov.in/',
+  'PM Fasal Bima Yojana (PMFBY)': 'https://pmfby.gov.in/',
+  'PM-KISAN grievance form': 'https://www.pmkisan.gov.in/Grievance.aspx',
+  'CPGRAMS': 'https://pgportal.gov.in/'
+};
+function portalForTracking(state, category, level) {
+  if (level === 'higher') return state === 'Tamil Nadu' ? 'Tamil Nadu CM Helpline' : 'Karnataka Janaspandana (iPGRS)';
+  if (category === 'Crop damage / insurance') return 'PM Fasal Bima Yojana (PMFBY)';
+  if (category === 'Scheme payment not received') return 'PM-KISAN grievance form';
+  return state === 'Tamil Nadu' ? 'Tamil Nadu CM Helpline' : 'Karnataka Janaspandana (iPGRS)';
+}
+function refreshTrackingPortalOptions() {
+  const state = document.getElementById('trackingState').value;
+  const category = document.getElementById('trackingCategory').value;
+  const level = document.getElementById('trackingLevel').value;
+  const preferred = portalForTracking(state, category, level);
+  const allowed = level === 'higher'
+    ? (state === 'Tamil Nadu' ? ['Tamil Nadu CM Helpline'] : ['Karnataka Janaspandana (iPGRS)'])
+    : [preferred, state === 'Tamil Nadu' ? 'Tamil Nadu CM Helpline' : 'Karnataka Janaspandana (iPGRS)'].filter((item, index, all) => all.indexOf(item) === index);
+  const select = document.getElementById('trackingPortal');
+  select.innerHTML = allowed.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+}
+['trackingState','trackingCategory','trackingLevel'].forEach(id => document.getElementById(id).addEventListener('change', refreshTrackingPortalOptions));
+refreshTrackingPortalOptions();
 
 function renderDepartmentLinks(target, category, state) {
   const links = grievancePortals.forIssue(category, state);
@@ -380,11 +407,47 @@ document.getElementById('grievanceForm').addEventListener('submit', event => {
   success.querySelector('#anotherGrievance').addEventListener('click', () => { success.hidden = true; document.getElementById('grievanceFormWrap').hidden = false; document.getElementById('grievanceForm').reset(); issueCategory.value = 'Crop damage / insurance'; grievanceState.value = 'Karnataka'; updateDepartmentRouting(); });
 });
 
-document.getElementById('trackForm').addEventListener('submit', async event => {
+function renderSavedGrievances(records, container, phone) {
+  if (!records.length) { container.innerHTML = '<p class="tracking-empty">No saved IDs found for this phone number.</p>'; return; }
+  const groups = new Map();
+  records.forEach(row => { if (!groups.has(row.caseId)) groups.set(row.caseId, []); groups.get(row.caseId).push(row); });
+  container.innerHTML = [...groups.entries()].map(([caseId, items]) => {
+    const first = items.find(item => item.authorityLevel === 'local') || items[items.length - 1];
+    const unresolved = items.some(item => ['unresolved','in_progress'].includes(item.status));
+    const stages = items.map(item => `<div class="saved-stage"><b>${item.authorityLevel === 'local' ? 'Local / first portal' : 'Higher-level follow-up'} · ${escapeHtml(item.portal)}</b><small>ID: ${escapeHtml(item.trackingId)} · Status saved: ${escapeHtml(item.status.replace('_',' '))} · ${new Date(item.updatedAt || item.filedAt).toLocaleDateString()}</small><div><a href="${escapeHtml(item.portalUrl)}" target="_blank" rel="noopener noreferrer">Open portal to check live status ↗</a><select data-status-id="${escapeHtml(item.id)}" aria-label="Update saved status"><option value="submitted" ${item.status==='submitted'?'selected':''}>Submitted</option><option value="in_progress" ${item.status==='in_progress'?'selected':''}>In progress</option><option value="unresolved" ${item.status==='unresolved'?'selected':''}>Still unresolved</option><option value="resolved" ${item.status==='resolved'?'selected':''}>Resolved</option></select></div></div>`).join('');
+    const escalate = unresolved ? `<button type="button" class="outline-button escalate-grievance" data-case-id="${escapeHtml(caseId)}" data-state="${escapeHtml(first.state)}" data-category="${escapeHtml(first.category)}">Add higher-level tracking ID</button>` : '';
+    return `<article class="saved-grievance"><b>${escapeHtml(first.category)} · ${escapeHtml(first.state)}</b>${stages}<small class="tracking-note">Saved status is entered by you; it is not confirmed by the government system.</small>${escalate}</article>`;
+  }).join('');
+  container.querySelectorAll('[data-status-id]').forEach(select => select.addEventListener('change', async () => {
+    try { const response = await fetch(`/api/grievance-tracking/${encodeURIComponent(select.dataset.statusId)}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ phoneNumber: phone, status: select.value }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); toast('Saved status updated'); }
+    catch (error) { toast(error.message || 'Could not update status'); }
+  }));
+  container.querySelectorAll('.escalate-grievance').forEach(button => button.addEventListener('click', () => {
+    document.getElementById('trackingCaseId').value = button.dataset.caseId;
+    document.getElementById('trackingState').value = button.dataset.state;
+    document.getElementById('trackingCategory').value = button.dataset.category;
+    document.getElementById('trackingLevel').value = 'higher'; refreshTrackingPortalOptions();
+    document.getElementById('trackingPhone').value = phone; document.getElementById('trackingFindPhone').value = phone;
+    document.getElementById('trackingId').focus();
+    toast('After filing the appeal, enter the new authority’s tracking ID');
+  }));
+}
+document.getElementById('trackingFindForm').addEventListener('submit', async event => {
   event.preventDefault();
-  const id = document.getElementById('trackId').value.trim();
-  const message = 'The app cannot fetch government case status yet. Open the government portal where you filed and use its Check Status option with your official reference ID.';
-  document.getElementById('trackResult').innerHTML = `<div class="tip"><b>${escapeHtml(id)}</b><p>${escapeHtml(message)}</p></div>`;
+  const phone = document.getElementById('trackingFindPhone').value.trim();
+  const target = document.getElementById('savedGrievances'); target.innerHTML = '<p class="tracking-empty">Loading saved grievances…</p>';
+  try { const response = await fetch('/api/grievance-tracking', { headers:{'X-Farmer-Phone': phone} }); const result = await response.json(); if (!response.ok) throw new Error(result.error); renderSavedGrievances(result.grievances, target, phone); }
+  catch (error) { target.innerHTML = `<p class="tracking-empty">${escapeHtml(error.message || 'Could not load saved grievances.')}</p>`; }
+});
+document.getElementById('trackingSaveForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const phone = document.getElementById('trackingPhone').value.trim();
+  const body = { phoneNumber:phone, caseId:document.getElementById('trackingCaseId').value || undefined, state:document.getElementById('trackingState').value, category:document.getElementById('trackingCategory').value, authorityLevel:document.getElementById('trackingLevel').value, portal:document.getElementById('trackingPortal').value, portalUrl:trackingPortalOptions[document.getElementById('trackingPortal').value], trackingId:document.getElementById('trackingId').value.trim(), status:document.getElementById('trackingStatus').value, consent:document.getElementById('trackingConsent').checked };
+  try {
+    const response = await fetch('/api/grievance-tracking', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }); const result = await response.json(); if (!response.ok) throw new Error(result.error);
+    document.getElementById('trackingFindPhone').value = phone; document.getElementById('trackingCaseId').value = ''; document.getElementById('trackingId').value = ''; document.getElementById('trackingConsent').checked = false;
+    const findForm = document.getElementById('trackingFindForm'); findForm.requestSubmit(); toast('Official tracking ID saved');
+  } catch (error) { toast(error.message || 'Could not save tracking ID'); }
 });
 
 document.getElementById('today').textContent = new Intl.DateTimeFormat('en', { weekday: 'long', day: '2-digit', month: 'long' }).format(new Date()).toUpperCase();
