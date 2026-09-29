@@ -102,6 +102,12 @@ const schemeExtraCopy = {
   } }
 };
 
+const schemePresentationCopy = {
+  en: { progress: 'ELIGIBILITY PRE-CHECK', step: 'Step 1 of 2', resultsStep: 'Results', asideTitle: 'Check before applying', asideIntro: 'We compare your answers with published government rules and link you to the right department portal.', asideList: ['Covered in this first screen', 'PM-KISAN · Central', 'Samathuvapuram · Tamil Nadu housing', 'Uzhavar Pathukappu · Tamil Nadu', 'State agriculture directories · TN / Karnataka', 'Krushak Odisha · jurisdiction check'], asideNote: 'No Aadhaar, bank or document numbers are collected. The pre-check does not query government records or submit applications.', scope: 'Do not enter Aadhaar, bank account or document numbers here. This is a rules-based pre-check only; it cannot query land records, confirm a live application window or approve benefits.', family: 'The scheme is assessed at family level (husband, wife and minor children); duplicate-family cases may be held for verification.', landDate: 'Recent land transfers may need a manual PM-KISAN review; succession cases can be treated differently.', priority: 'Landless and vulnerable households are priority groups under the 2023 Government Order. No personal details are needed here.', locationPlaceholder: 'Enter your district and village' },
+  ta: { progress: 'தகுதி முதற்கட்டச் சரிபார்ப்பு', step: 'படி 1 / 2', resultsStep: 'முடிவுகள்', asideTitle: 'விண்ணப்பிக்கும் முன் சரிபார்க்கவும்', asideIntro: 'அரசு வெளியிட்ட விதிகளுடன் உங்கள் பதில்களை ஒப்பிட்டு, தொடர்புடைய துறை இணையதளத்தை இணைக்கிறோம்.', asideList: ['இந்த முதற்கட்டத்தில் உள்ளவை', 'PM-KISAN · மத்திய அரசு', 'சமத்துவபுரம் · தமிழ்நாடு வீடு', 'உழவர் பாதுகாப்பு · தமிழ்நாடு', 'வேளாண் திட்டப் பட்டியல் · தமிழ்நாடு / கர்நாடகம்', 'Krushak Odisha · மாநில வரம்பு சரிபார்ப்பு'], asideNote: 'ஆதார், வங்கி அல்லது ஆவண எண்கள் சேகரிக்கப்படாது. அரசு பதிவுகளை நேரடியாகத் தேடவோ விண்ணப்பிக்கவோ இந்த முதற்கட்டச் சரிபார்ப்பால் முடியாது.', scope: 'இங்கு ஆதார், வங்கி அல்லது ஆவண எண்களை உள்ளிட வேண்டாம். இது விதி அடிப்படையிலான முதற்கட்டச் சரிபார்ப்பு மட்டுமே; நிலப் பதிவுகளைத் தேடவோ, தற்போதைய விண்ணப்ப காலத்தை உறுதிசெய்யவோ, நன்மையை ஒப்புதலளிக்கவோ முடியாது.', family: 'திட்டம் கணவன், மனைவி, சிறுவர் குழந்தைகள் அடங்கிய குடும்பத்தை அடிப்படையாகக் கணக்கிடுகிறது; ஒரே குடும்பத்தில் பல பயனாளர் பதிவுகள் இருந்தால் சரிபார்ப்புக்காக நிறுத்தப்படலாம்.', landDate: 'சமீபத்திய நில மாற்றங்களுக்கு PM-KISAN அலுவலகச் சரிபார்ப்பு தேவைப்படலாம்; வாரிசுரிமைக்கு வேறு விதி இருக்கலாம்.', priority: '2023 அரசாணையில் நிலமற்ற மற்றும் பாதிப்புக்குள்ளான குடும்பங்களுக்கு முன்னுரிமை உண்டு. தனிப்பட்ட விவரங்கள் தேவையில்லை.', locationPlaceholder: 'உங்கள் மாவட்டம், கிராமத்தை உள்ளிடவும்' },
+  kn: { progress: 'ಅರ್ಹತಾ ಪ್ರಾಥಮಿಕ ಪರಿಶೀಲನೆ', step: 'ಹಂತ 1 / 2', resultsStep: 'ಫಲಿತಾಂಶಗಳು', asideTitle: 'ಅರ್ಜಿ ಸಲ್ಲಿಸುವ ಮೊದಲು ಪರಿಶೀಲಿಸಿ', asideIntro: 'ನಿಮ್ಮ ಉತ್ತರಗಳನ್ನು ಪ್ರಕಟಿತ ಸರ್ಕಾರಿ ನಿಯಮಗಳೊಂದಿಗೆ ಹೋಲಿಸಿ ಸಂಬಂಧಿತ ಇಲಾಖೆಯ ಪೋರ್ಟಲ್ ನೀಡುತ್ತೇವೆ.', asideList: ['ಈ ಪ್ರಾಥಮಿಕ ಪರಿಶೀಲನೆಯಲ್ಲಿ', 'PM-KISAN · ಕೇಂದ್ರ ಸರ್ಕಾರ', 'ಸಮತ್ತುವಪುರಂ · ತಮಿಳುನಾಡು ವಸತಿ', 'ಉಳುವರ್ ಪಾತುಕಾಪ್ಪು · ತಮಿಳುನಾಡು', 'ಕೃಷಿ ಯೋಜನೆಗಳ ಪಟ್ಟಿ · ತಮಿಳುನಾಡು / ಕರ್ನಾಟಕ', 'Krushak Odisha · ರಾಜ್ಯ ವ್ಯಾಪ್ತಿ ಪರಿಶೀಲನೆ'], asideNote: 'ಆಧಾರ್, ಬ್ಯಾಂಕ್ ಅಥವಾ ದಾಖಲೆ ಸಂಖ್ಯೆಯನ್ನು ಸಂಗ್ರಹಿಸುವುದಿಲ್ಲ. ಈ ಪರಿಶೀಲನೆ ಸರ್ಕಾರಿ ದಾಖಲೆ ಹುಡುಕುವುದಿಲ್ಲ ಅಥವಾ ಅರ್ಜಿಯನ್ನು ಸಲ್ಲಿಸುವುದಿಲ್ಲ.', scope: 'ಇಲ್ಲಿ ಆಧಾರ್, ಬ್ಯಾಂಕ್ ಅಥವಾ ದಾಖಲೆ ಸಂಖ್ಯೆಯನ್ನು ನಮೂದಿಸಬೇಡಿ. ಇದು ನಿಯಮಾಧಾರಿತ ಪ್ರಾಥಮಿಕ ಪರಿಶೀಲನೆ ಮಾತ್ರ; ಭೂ ದಾಖಲೆ, ಪ್ರಸ್ತುತ ಅರ್ಜಿ ಅವಧಿ ಅಥವಾ ಸರ್ಕಾರಿ ಅನುಮೋದನೆಯನ್ನು ಪರಿಶೀಲಿಸಲಾಗದು.', family: 'ಯೋಜನೆ ಗಂಡ, ಹೆಂಡತಿ ಮತ್ತು ಅಪ್ರಾಪ್ತ ಮಕ್ಕಳ ರೈತ ಕುಟುಂಬವನ್ನು ಒಟ್ಟಾಗಿ ಪರಿಗಣಿಸುತ್ತದೆ; ಒಂದೇ ಕುಟುಂಬದ ಅನೇಕ ಫಲಾನುಭವಿ ದಾಖಲೆಗಳನ್ನು ಪರಿಶೀಲನೆಗಾಗಿ ತಡೆಹಿಡಿಯಬಹುದು.', landDate: 'ಇತ್ತೀಚಿನ ಭೂ ವರ್ಗಾವಣೆಗೆ PM-KISAN ಕೈಯಾರೆ ಪರಿಶೀಲನೆ ಬೇಕಾಗಬಹುದು; ವಾರಸುದಾರಿಕೆಗೆ ಬೇರೆ ನಿಯಮ ಇರಬಹುದು.', priority: '2023ರ ಸರ್ಕಾರಿ ಆದೇಶದಲ್ಲಿ ಭೂಹೀನ ಮತ್ತು ದುರ್ಬಲ ಕುಟುಂಬಗಳಿಗೆ ಆದ್ಯತೆಯಿದೆ. ವೈಯಕ್ತಿಕ ವಿವರಗಳ ಅಗತ್ಯವಿಲ್ಲ.', locationPlaceholder: 'ನಿಮ್ಮ ಜಿಲ್ಲೆ ಮತ್ತು ಗ್ರಾಮ ನಮೂದಿಸಿ' }
+};
+
 function setupSchemeQuestions() {
   const acresLabel = document.getElementById('acres').closest('label');
   if (acresLabel) acresLabel.hidden = true;
@@ -122,6 +128,7 @@ function setupSchemeQuestions() {
 function updateSchemeCopy(language) {
   const copy = schemeLabels[language] || schemeLabels.en;
   const extra = schemeExtraCopy[language] || schemeExtraCopy.en;
+  const presentation = schemePresentationCopy[language] || schemePresentationCopy.en;
   const setLabel = (id, text) => { const label = document.getElementById(id)?.closest('label'); if (label?.firstChild) label.firstChild.textContent = `${text} `; };
   document.querySelector('#schemes-view .page-intro h1').textContent = copy.pageTitle;
   document.querySelector('#schemes-view .page-intro > p').textContent = copy.intro;
@@ -129,6 +136,19 @@ function updateSchemeCopy(language) {
   document.querySelector('#schemeForm [data-step="1"] > p').textContent = copy.intro;
   document.querySelector('#schemeResults h2').textContent = copy.results;
   document.querySelector('#schemeResults > p').textContent = copy.disclaimer;
+  document.querySelector('.progress-label > span:first-child').textContent = presentation.progress;
+  document.querySelector('.scheme-aside h3').textContent = presentation.asideTitle;
+  document.querySelector('.scheme-aside > p').textContent = presentation.asideIntro;
+  const asideList = document.querySelector('.scheme-aside .scheme-note');
+  asideList.querySelector('b').textContent = presentation.asideList[0];
+  [...asideList.querySelectorAll('span')].forEach((item, index) => { if (presentation.asideList[index + 1]) item.textContent = presentation.asideList[index + 1]; });
+  document.querySelector('.scheme-aside > small').textContent = presentation.asideNote;
+  document.getElementById('schemeScopeNote').textContent = presentation.scope;
+  document.querySelector('#landDateLabel small').textContent = presentation.landDate;
+  document.querySelector('#familyBenefit').parentElement.querySelector('small').textContent = presentation.family;
+  document.querySelector('#housingLand').parentElement.querySelector('small').textContent = presentation.priority;
+  document.getElementById('schemeLocation').placeholder = presentation.locationPlaceholder;
+  document.getElementById('stepLabel').textContent = document.getElementById('schemeResults').classList.contains('active') ? presentation.resultsStep : presentation.step;
   setLabel('state', copy.state); setLabel('land', copy.land); setLabel('aadhaar', copy.aadhaar); setLabel('exclusions', copy.exclusions);
   setLabel('schemeLocation', extra.location);
   for (const [index, id] of ['landAcquisition','familyBenefit','samInterest','housingLand','housingPriority','houseRoof','priorHousing','permanentStay','ageBand','farmerType','safetyLand'].entries()) setLabel(id, extra.labels[index]);
@@ -354,7 +374,7 @@ document.getElementById('checkSchemes').addEventListener('click', async () => {
   renderSchemeResults();
   document.querySelector('[data-step="1"]').classList.remove('active');
   document.getElementById('schemeResults').classList.add('active');
-  document.getElementById('stepLabel').textContent = 'Results';
+  document.getElementById('stepLabel').textContent = schemePresentationCopy[document.getElementById('language').value]?.resultsStep || 'Results';
   document.getElementById('progressBar').style.width = '100%';
   addActivity('Scheme eligibility checked', '3 schemes reviewed');
 });
