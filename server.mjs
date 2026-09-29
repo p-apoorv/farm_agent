@@ -44,7 +44,7 @@ if (process.env.DATABASE_URL) {
 }
 const profileStorage = () => profilePool ? 'postgres' : 'local-demo';
 const authCookieName = 'nelam_session';
-const authSecret = process.env.AUTH_SESSION_SECRET || process.env.USER_ID_SECRET;
+const authSecret = process.env.AUTH_SESSION_SECRET || process.env.USER_ID_SECRET || (process.env.DATABASE_URL ? createHmac('sha256', process.env.DATABASE_URL).update('nelam-auth-session-v1').digest('hex') : null);
 const scryptAsync = promisify(scrypt);
 function authUserId(channel, contact) {
   return authSecret ? createHmac('sha256', authSecret).update(`${channel}:${contact}`).digest('hex') : null;
