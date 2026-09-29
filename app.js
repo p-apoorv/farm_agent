@@ -383,26 +383,65 @@ issueCategory.addEventListener('change', updateDepartmentRouting);
 grievanceState.addEventListener('change', updateDepartmentRouting);
 updateDepartmentRouting();
 
-document.getElementById('grievanceForm').addEventListener('submit', event => {
+const grievanceForm = document.getElementById('grievanceForm');
+grievanceForm.noValidate = true;
+let filingDetailsAdded = false;
+function addFilingDetails() {
+  if (filingDetailsAdded) return;
+  const state = grievanceState.value;
+  const isKarnataka = state === 'Karnataka';
+  const profilePhone = document.getElementById('profilePhone')?.value.trim() || '';
+  const location = document.getElementById('profileLocation')?.value.trim() || '';
+  const addressParts = location.split(',').map(part => part.trim()).filter(Boolean);
+  const required = '<span class="required-mark">Required</span>';
+  const field = (id, label, placeholder, value = '', requiredField = true, type = 'text') => `<label>${label}${requiredField ? required : '<span class="optional-mark">Optional</span>'}<input id="${id}" name="${id}" type="${type}" ${requiredField ? 'data-required="true"' : ''} value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" autocomplete="${id === 'filingPhone' ? 'tel' : 'off'}" /></label>`;
+  const fields = `<div class="filing-details" id="filingDetails"><h3>Details needed for ${isKarnataka ? 'Janaspandana' : 'Tamil Nadu CM Helpline'}</h3><p>We’ve prepared the portal-specific fields. Please complete anything missing; these details stay in this browser until you open the government portal.</p>${field('filingName','Full name as on your grievance account','Your full name')}${field('filingPhone','Mobile number','+91 98765 43210',profilePhone,true,'tel')}${field('filingDistrict','District','District name',addressParts.at(-1) || '')}${isKarnataka ? field('filingTaluk','Taluk','Taluk name') : ''}${field('filingVillage','Village / Gram Panchayat','Village name',document.getElementById('village').value.trim())}${isKarnataka ? field('filingHouse','House number','House or door number') + field('filingStreet','Street address','Street') + field('filingLocality','Locality','Locality') + field('filingLandmark','Landmark','Nearby landmark', '', false) + field('filingPin','PIN code','6-digit PIN code','',true,'text') : field('filingAddress','Address / locality','Street or locality',location,false)}${!isKarnataka ? `<label>Department<select id="filingDepartment" data-required="true"><option value="">Choose a department</option><option>Agriculture</option><option>Revenue</option><option>Rural Development / Panchayat</option><option>Electricity</option><option>Other Petitions — help me identify it</option></select></label>` : ''}${field('filingIncidentDate','Date of incident (if known)','', '',false,'date')}<div class="missing-details" id="missingFilingDetails" aria-live="polite"></div><small class="portal-limit">${isKarnataka ? 'Official login/OTP, CAPTCHA, attachments and final submission remain on Janaspandana.' : 'Tamil Nadu CM Helpline accepts Tamil or English. Official login/OTP, attachments and final submission remain on its portal.'} This draft does not ask for Aadhaar. Enter sensitive identifiers only directly on the official government site if it requires them.</small></div>`;
+  grievanceForm.querySelector('.primary-button').insertAdjacentHTML('beforebegin', fields);
+  grievanceForm.querySelector('.primary-button').innerHTML = 'Prepare filled form <span>→</span>';
+  filingDetailsAdded = true;
+}
+grievanceForm.addEventListener('submit', event => {
   event.preventDefault();
-  if (!document.getElementById('consent').checked) return;
+  const consent = document.getElementById('consent');
+  if (!consent.checked) { toast('Please confirm that you will review and submit on the official portal.'); consent.focus(); return; }
+  const issueDetails = document.getElementById('issueText');
+  const issueVillage = document.getElementById('village');
+  if (!issueDetails.value.trim()) { toast('Please describe what happened so I can prepare the complaint.'); issueDetails.focus(); return; }
+  if (!issueVillage.value.trim()) { toast('Please tell me the village or nearest town.'); issueVillage.focus(); return; }
+  if (!filingDetailsAdded) { grievanceState.disabled = true; addFilingDetails(); document.getElementById('filingName').focus(); toast('I’ve filled in details already provided. Please answer the remaining portal questions.'); return; }
+  const missing = [...grievanceForm.querySelectorAll('[data-required="true"]')].filter(input => !input.value.trim());
+  const missingPanel = document.getElementById('missingFilingDetails');
+  if (missing.length) {
+    missingPanel.innerHTML = `<b>I still need these details:</b><ul>${missing.map(input => `<li>${escapeHtml(input.closest('label').childNodes[0].textContent.trim())}</li>`).join('')}</ul>`;
+    missing[0].focus(); toast(`Please add ${missing[0].closest('label').childNodes[0].textContent.trim()}.`); return;
+  }
+  const phone = document.getElementById('filingPhone').value.trim();
+  if (!/^\+?[0-9\s()-]{10,17}$/.test(phone)) { missingPanel.innerHTML = '<b>Enter a valid phone number including country code, for example +91 98765 43210.</b>'; document.getElementById('filingPhone').focus(); return; }
+  const pin = document.getElementById('filingPin');
+  if (pin && !/^\d{6}$/.test(pin.value.trim())) { missingPanel.innerHTML = '<b>Enter a valid 6-digit PIN code.</b>'; pin.focus(); return; }
+  missingPanel.textContent = '';
   const category = issueCategory.value;
   const state = grievanceState.value;
   const description = document.getElementById('issueText').value.trim();
   const village = document.getElementById('village').value.trim();
+  const details = [...grievanceForm.querySelectorAll('#filingDetails input, #filingDetails select')].filter(input => input.value.trim()).map(input => `${input.closest('label').childNodes[0].textContent.trim()}: ${input.value.trim()}`);
+  const packet = `${details.join('\n')}\nIssue category: ${category}\nState: ${state}\nVillage / town: ${village}\nDepartment: ${document.getElementById('filingDepartment')?.value || 'Select the responsible department on the portal'}\n\nIssue details:\n${description}`;
   document.getElementById('grievanceFormWrap').hidden = true;
   const success = document.getElementById('grievanceSuccess');
   success.hidden = false;
   success.className = 'grievance-success';
   const links = grievancePortals.forIssue(category, state);
-  const summary = `${category}\nState: ${state}\nVillage / town: ${village}\n\nIssue details:\n${description}`;
-  success.innerHTML = `<div class="result-mark">↗</div><h2>Continue to an official portal</h2><p>No government filing has been made and no reference ID has been created. Copy your summary, open the appropriate portal, and submit the complaint there. The department will issue its own tracking ID.</p><div class="department-link-list">${links.map(link => `<a class="department-link" href="${link.url}" target="_blank" rel="noopener noreferrer"><span><b>${escapeHtml(link.label)}</b><small>${escapeHtml(link.note)}</small></span><span aria-hidden="true">↗</span></a>`).join('')}</div><button class="outline-button" type="button" id="copyGrievanceSummary">Copy issue summary</button> <button class="outline-button" type="button" id="anotherGrievance">＋ Start again</button><small class="copy-status" id="copySummaryStatus" aria-live="polite"></small>`;
-  success.querySelector('#copyGrievanceSummary').addEventListener('click', async () => {
+  const localPortal = links[0];
+  success.innerHTML = `<div class="result-mark">✓</div><h2>Your filing draft is ready</h2><p>I filled the app’s filing draft with your answers. Nothing has been sent and no tracking ID exists yet. Copy the prepared details, open the local portal and paste them into its matching fields. The portal may ask you to sign in with OTP, complete CAPTCHA, choose a department, attach documents and submit.</p><div class="filing-preview"><b>Prepared details</b><pre>${escapeHtml(packet)}</pre></div><div class="department-link-list">${links.map(link => `<a class="department-link" href="${link.url}" target="_blank" rel="noopener noreferrer"><span><b>${escapeHtml(link.label)}</b><small>${escapeHtml(link.note)}</small></span><span aria-hidden="true">↗</span></a>`).join('')}</div><button class="primary-button" type="button" id="copyAndOpenPortal">Copy draft and open local portal <span>↗</span></button> <button class="outline-button" type="button" id="copyGrievanceSummary">Copy draft only</button> <button class="outline-button" type="button" id="editGrievanceDraft">← Edit answers</button> <button class="outline-button" type="button" id="anotherGrievance">＋ Start again</button><small class="copy-status" id="copySummaryStatus" aria-live="polite"></small>`;
+  const copyDraft = async () => {
     const status = success.querySelector('#copySummaryStatus');
-    try { await navigator.clipboard.writeText(summary); status.textContent = 'Summary copied. Paste it into the government portal form.'; }
-    catch { status.textContent = 'Clipboard unavailable. Select and copy your issue details from the form before opening a portal.'; }
-  });
-  success.querySelector('#anotherGrievance').addEventListener('click', () => { success.hidden = true; document.getElementById('grievanceFormWrap').hidden = false; document.getElementById('grievanceForm').reset(); issueCategory.value = 'Crop damage / insurance'; grievanceState.value = 'Karnataka'; updateDepartmentRouting(); });
+    try { await navigator.clipboard.writeText(packet); status.textContent = 'Draft copied. Paste each answer into its matching portal field and check everything before submitting.'; return true; }
+    catch { status.textContent = 'Clipboard unavailable. Use the prepared details shown above and copy them manually.'; return false; }
+  };
+  success.querySelector('#copyGrievanceSummary').addEventListener('click', copyDraft);
+  success.querySelector('#copyAndOpenPortal').addEventListener('click', async () => { await copyDraft(); window.open(localPortal.url, '_blank', 'noopener,noreferrer'); });
+  success.querySelector('#editGrievanceDraft').addEventListener('click', () => { success.hidden = true; document.getElementById('grievanceFormWrap').hidden = false; document.getElementById('filingName').focus(); });
+  success.querySelector('#anotherGrievance').addEventListener('click', () => { success.hidden = true; document.getElementById('grievanceFormWrap').hidden = false; grievanceForm.reset(); grievanceForm.querySelector('#filingDetails')?.remove(); filingDetailsAdded = false; grievanceState.disabled = false; grievanceForm.querySelector('.primary-button').innerHTML = 'Get filing links <span>→</span>'; issueCategory.value = 'Crop damage / insurance'; grievanceState.value = 'Karnataka'; updateDepartmentRouting(); });
 });
 
 function renderSavedGrievances(records, container, phone) {
