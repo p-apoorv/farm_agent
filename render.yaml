@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: nelam-farm-assistant
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/ivr/status
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: IVR_STREAM_TOKEN
+        generateValue: true
+      - key: SARVAM_API_SUBSCRIPTION_KEY
+        sync: false
+      - key: SARVAM_STT_MODEL
+        value: saaras:v3-realtime
+      - key: IVR_ADAPTER_URL
+        sync: false
+      - key: SARVAM_ADAPTER_URL
+        sync: false
+      - key: PUBLIC_WSS_URL
+        sync: false
