@@ -433,7 +433,7 @@ async function handle(req, res) {
   if (req.method === 'POST' && pathname === '/api/auth/logout') return send(res, 200, { signedOut: true }, { 'Set-Cookie': `${authCookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${process.env.NODE_ENV === 'production' || process.env.RENDER === 'true' ? '; Secure' : ''}` });
 
   if (req.method === 'POST' && pathname === '/api/ivr/turn' && (!process.env.IVR_STREAM_TOKEN || req.headers['x-ivr-internal-token'] !== process.env.IVR_STREAM_TOKEN)) return send(res, 401, { error: 'IVR session is not authorized.' });
-  const isPublicApi = pathname === '/api/health' || pathname.startsWith('/api/auth/') || pathname === '/api/ivr/turn' || pathname.startsWith('/api/channels/');
+  const isPublicApi = pathname === '/api/health' || pathname === '/api/ivr/status' || pathname.startsWith('/api/auth/') || pathname === '/api/ivr/turn' || pathname.startsWith('/api/channels/');
   if (pathname.startsWith('/api/admin/')) return send(res, 403, { error: 'Admin access is not available through the farmer sign-in.' });
   if (pathname.startsWith('/api/') && !isPublicApi && pathname !== '/api/memory/status' && pathname !== '/api/profile/status') {
     const session = sessionUser(req);
