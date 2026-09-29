@@ -2,6 +2,67 @@ const API_BASE = window.NELAM_API_BASE || '/api';
 const views = ['home', 'crop', 'schemes', 'grievance'];
 const activity = [];
 let toastTimer;
+let mem0Available = false;
+const memoryCopy = {
+  en: { label: 'Optionally save short chat summaries to Mem0, linked to your phone number.', checking: 'Checking whether memory storage is available…', unavailable: 'Mem0 is not configured on this service, so nothing will be sent or saved.', off: 'Enter your phone number below to link summaries to your account.', on: 'Memory is on for this phone number. You can turn it off for future chats.', saved: 'Summary sent to Mem0 for this phone-linked account.' },
+  ta: { label: 'தொலைபேசி எண்ணுடன் இணைத்து உரையாடல் சுருக்கங்களை Mem0-இல் விருப்பமாகச் சேமிக்கவும்.', checking: 'நினைவக சேமிப்பு உள்ளதா எனச் சரிபார்க்கிறது…', unavailable: 'இந்த சேவையில் Mem0 அமைக்கப்படவில்லை; எதுவும் அனுப்பவோ சேமிக்கவோ மாட்டோம்.', off: 'சுருக்கங்களை உங்கள் கணக்குடன் இணைக்க கீழே தொலைபேசி எண்ணை உள்ளிடவும்.', on: 'இந்த எண்ணுக்கான நினைவகம் இயக்கப்பட்டுள்ளது. அடுத்த உரையாடல்களுக்கு அணைக்கலாம்.', saved: 'இந்த தொலைபேசி கணக்கிற்கான சுருக்கம் Mem0-க்கு அனுப்பப்பட்டது.' },
+  kn: { label: 'ಫೋನ್ ಸಂಖ್ಯೆಗೆ ಜೋಡಿಸಿ ಚಾಟ್ ಸಾರಾಂಶಗಳನ್ನು Mem0 ನಲ್ಲಿ ಐಚ್ಛಿಕವಾಗಿ ಉಳಿಸಿ.', checking: 'ಮೆಮೊರಿ ಸಂಗ್ರಹ ಲಭ್ಯವಿದೆಯೇ ಎಂದು ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ…', unavailable: 'ಈ ಸೇವೆಯಲ್ಲಿ Mem0 ಹೊಂದಿಸಿಲ್ಲ; ಯಾವುದನ್ನೂ ಕಳುಹಿಸುವುದಿಲ್ಲ ಅಥವಾ ಉಳಿಸುವುದಿಲ್ಲ.', off: 'ಸಾರಾಂಶಗಳನ್ನು ಖಾತೆಗೆ ಜೋಡಿಸಲು ಕೆಳಗೆ ಫೋನ್ ಸಂಖ್ಯೆಯನ್ನು ನಮೂದಿಸಿ.', on: 'ಈ ಫೋನ್ ಸಂಖ್ಯೆಗೆ ಮೆಮೊರಿ ಸಕ್ರಿಯವಾಗಿದೆ. ಮುಂದಿನ ಚಾಟ್‌ಗಳಿಗೆ ನಿಲ್ಲಿಸಬಹುದು.', saved: 'ಈ ಫೋನ್ ಖಾತೆಯ ಸಾರಾಂಶವನ್ನು Mem0 ಗೆ ಕಳುಹಿಸಲಾಗಿದೆ.' }
+};
+
+function updateMemoryConsentCopy(saved = false) {
+  const language = document.getElementById('language')?.value || 'en';
+  const copy = memoryCopy[language] || memoryCopy.en;
+  const checkbox = document.getElementById('rememberChat');
+  if (!checkbox) return;
+  let consent = false;
+  try { consent = localStorage.getItem('nelam-memory-consent') === 'yes'; } catch (_) { /* Storage may be unavailable in private browsing. */ }
+  checkbox.disabled = !mem0Available;
+  checkbox.checked = mem0Available && consent;
+  document.getElementById('memoryConsentCopy').textContent = copy.label;
+  document.getElementById('memoryConsentStatus').textContent = !mem0Available ? copy.unavailable : saved ? copy.saved : checkbox.checked ? copy.on : copy.off;
+}
+
+fetch(`${API_BASE}/memory/status`).then(response => response.json()).then(status => {
+  mem0Available = Boolean(status.configured);
+  updateMemoryConsentCopy();
+}).catch(() => updateMemoryConsentCopy());
+
+document.getElementById('rememberChat').addEventListener('change', event => {
+  try { localStorage.setItem('nelam-memory-consent', event.target.checked ? 'yes' : 'no'); } catch (_) { /* Consent remains for this page view. */ }
+  updateMemoryConsentCopy();
+});
+
+const profileForm = document.getElementById('farmerProfileForm');
+const profileInputs = { crop: 'profileCrop', fertilizerChoices: 'profileFertilizer', soilType: 'profileSoil', irrigation: 'profileIrrigation', farmLocation: 'profileLocation' };
+function profileMessage(en, ta, kn) { const lang = document.getElementById('language').value; return lang === 'ta' ? ta : lang === 'kn' ? kn : en; }
+async function loadFarmerProfile() {
+  const phoneNumber = document.getElementById('profilePhone').value.trim();
+  if (!phoneNumber) return;
+  const status = document.getElementById('profileStatus');
+  status.textContent = profileMessage('Loading saved preferences…', 'சேமித்த விருப்பங்களை ஏற்றுகிறது…', 'ಉಳಿಸಿದ ಆದ್ಯತೆಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ…');
+  try {
+    const response = await fetch(`${API_BASE}/profile`, { headers: { 'X-Farmer-Phone': phoneNumber } });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load profile');
+    for (const [key, id] of Object.entries(profileInputs)) document.getElementById(id).value = data.profile?.[key] || '';
+    status.textContent = data.storage === 'postgres' ? profileMessage('Saved profile loaded from the database.', 'தரவுத்தளத்தில் சேமித்த சுயவிவரம் ஏற்றப்பட்டது.', 'ಡೇಟಾಬೇಸ್‌ನಿಂದ ಉಳಿಸಿದ ಪ್ರೊಫೈಲ್ ಲೋಡ್ ಆಯಿತು.') : profileMessage('Local demo profile loaded. Connect a database for durable storage.', 'உள்ளூர் மாதிரி சுயவிவரம் ஏற்றப்பட்டது. நீடித்த சேமிப்புக்கு தரவுத்தளத்தை இணைக்கவும்.', 'ಸ್ಥಳೀಯ ಡೆಮೊ ಪ್ರೊಫೈಲ್ ಲೋಡ್ ಆಯಿತು. ಶಾಶ್ವತ ಸಂಗ್ರಹಕ್ಕೆ ಡೇಟಾಬೇಸ್ ಸಂಪರ್ಕಿಸಿ.');
+  } catch (_) { status.textContent = profileMessage('Enter a valid phone number to load a profile.', 'சுயவிவரத்தை ஏற்ற சரியான தொலைபேசி எண்ணை உள்ளிடவும்.', 'ಪ್ರೊಫೈಲ್ ಲೋಡ್ ಮಾಡಲು ಸರಿಯಾದ ಫೋನ್ ಸಂಖ್ಯೆಯನ್ನು ನಮೂದಿಸಿ.'); }
+}
+document.getElementById('profilePhone').addEventListener('blur', loadFarmerProfile);
+profileForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const status = document.getElementById('profileStatus');
+  const phoneNumber = document.getElementById('profilePhone').value.trim();
+  const preferences = Object.fromEntries(Object.entries(profileInputs).map(([key, id]) => [key, document.getElementById(id).value.trim()]));
+  preferences.language = document.getElementById('language').value;
+  status.textContent = profileMessage('Saving…', 'சேமிக்கிறது…', 'ಉಳಿಸಲಾಗುತ್ತಿದೆ…');
+  try {
+    const response = await fetch(`${API_BASE}/profile`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phoneNumber, preferences }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Save failed');
+    status.textContent = data.storage === 'postgres' ? profileMessage('Preferences saved to the database.', 'விருப்பங்கள் தரவுத்தளத்தில் சேமிக்கப்பட்டன.', 'ಆದ್ಯತೆಗಳನ್ನು ಡೇಟಾಬೇಸ್‌ನಲ್ಲಿ ಉಳಿಸಲಾಗಿದೆ.') : profileMessage('Saved in local demo storage; connect a database for durable storage.', 'உள்ளூர் மாதிரியில் சேமிக்கப்பட்டது; நீடித்த சேமிப்புக்கு தரவுத்தளத்தை இணைக்கவும்.', 'ಸ್ಥಳೀಯ ಡೆಮೊದಲ್ಲಿ ಉಳಿಸಲಾಗಿದೆ; ಶಾಶ್ವತ ಸಂಗ್ರಹಕ್ಕೆ ಡೇಟಾಬೇಸ್ ಸಂಪರ್ಕಿಸಿ.');
+  } catch (error) { status.textContent = error.message || profileMessage('Could not save preferences.', 'விருப்பங்களைச் சேமிக்க முடியவில்லை.', 'ಆದ್ಯತೆಗಳನ್ನು ಉಳಿಸಲಾಗಲಿಲ್ಲ.'); }
+});
 
 function toast(message) {
   const el = document.getElementById('toast');
@@ -99,6 +160,7 @@ document.getElementById('language').addEventListener('change', event => {
   document.getElementById('welcomeText').textContent = copy.welcome;
   document.getElementById('chatInput').placeholder = copy.placeholder;
   updateSchemeCopy(event.target.value);
+  updateMemoryConsentCopy();
 });
 
 const demoReplies = [
@@ -119,10 +181,12 @@ async function askAdvisory(message, extra = {}) {
   try {
     const response = await fetch(`${API_BASE}/crop/advisory`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, language: document.getElementById('language').value, location: 'Mandya, Karnataka', ...extra })
+      body: JSON.stringify({ message, language: document.getElementById('language').value, location: document.getElementById('profileLocation').value || 'Mandya, Karnataka', phoneNumber: document.getElementById('profilePhone').value.trim(), rememberChat: document.getElementById('rememberChat').checked, ...extra })
     });
     if (response.ok) {
       const data = await response.json();
+      if (data.memory?.saved) updateMemoryConsentCopy(true);
+      if (data.memory?.phoneRequired) document.getElementById('memoryConsentStatus').textContent = profileMessage('Add a valid phone number in My farm preferences to link chat memory.', 'உரையாடல் நினைவகத்தை இணைக்க My farm preferences பகுதியில் சரியான தொலைபேசி எண்ணைச் சேர்க்கவும்.', 'ಚಾಟ್ ಮೆಮೊರಿಯನ್ನು ಜೋಡಿಸಲು My farm preferences ನಲ್ಲಿ ಸರಿಯಾದ ಫೋನ್ ಸಂಖ್ಯೆಯನ್ನು ಸೇರಿಸಿ.');
       return appendBot(data.reply || data.answer || 'I could not find a recommendation. Please try again.');
     }
   } catch (_) { /* Local demo responses are used when middleware is not running. */ }

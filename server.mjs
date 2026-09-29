@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attachIvr } from './ivr.mjs';
+import { isMem0Configured, mem0UserIdForPhone, normalizePhoneNumber, searchUserMemories, storeChatSummary } from './mem0.mjs';
 
 try { process.loadEnvFile(); } catch { /* Local .env is optional; deployments should inject environment variables. */ }
 
@@ -11,7 +12,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const dataPath = join(root, 'data', 'demo-store.json');
 const port = Number(process.env.PORT || 4173);
 const maxBodyBytes = 12 * 1024 * 1024;
-const db = { grievances: [], eligibilityChecks: [], conversations: [] };
+const db = { grievances: [], eligibilityChecks: [], conversations: [], farmerProfiles: {} };
 const ivrStatus = {
   active: Boolean(process.env.SARVAM_API_SUBSCRIPTION_KEY && process.env.IVR_STREAM_TOKEN && process.env.PUBLIC_WSS_URL && (process.env.IVR_ADAPTER_URL || process.env.SARVAM_ADAPTER_URL)),
   hasSarvamKey: Boolean(process.env.SARVAM_API_SUBSCRIPTION_KEY),
@@ -24,6 +25,19 @@ let writeQueue = Promise.resolve();
 
 await mkdir(dirname(dataPath), { recursive: true });
 try { Object.assign(db, JSON.parse(await readFile(dataPath, 'utf8'))); } catch { await persist(); }
+
+let profilePool = null;
+if (process.env.DATABASE_URL) {
+  try {
+    const { Pool } = await import('pg');
+    profilePool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined });
+    await profilePool.query(`CREATE TABLE IF NOT EXISTS farmer_profiles (user_id TEXT PRIMARY KEY, preferences JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  } catch (error) {
+    console.error('Profile database initialization failed. Check DATABASE_URL and database availability.');
+    profilePool = null;
+  }
+}
+const profileStorage = () => profilePool ? 'postgres' : 'local-demo';
 
 async function persist() {
   writeQueue = writeQueue.then(() => writeFile(dataPath, JSON.stringify(db, null, 2), 'utf8'));
@@ -68,6 +82,62 @@ async function callAdapter(baseUrl, route, payload) {
   });
   if (!response.ok) throw Object.assign(new Error(`Configured adapter returned ${response.status}`), { status: 502 });
   return response.json();
+}
+
+async function loadChatMemory(body) {
+  if (body.rememberChat !== true || !isMem0Configured()) return { userId: null, summaries: [] };
+  const userId = mem0UserIdForPhone(body.phoneNumber);
+  if (!userId) return { userId: null, summaries: [] };
+  try {
+    const summaries = await searchUserMemories(userId, body.message);
+    return { userId, summaries };
+  } catch (error) {
+    console.warn('Mem0 memory search failed:', error.message);
+    return { userId, summaries: [] };
+  }
+}
+
+const preferenceFields = ['crop', 'fertilizerChoices', 'soilType', 'irrigation', 'farmLocation', 'language'];
+function cleanPreferences(value) {
+  const limits = { crop: 80, fertilizerChoices: 300, soilType: 80, irrigation: 80, farmLocation: 120, language: 2 };
+  const result = {};
+  for (const field of preferenceFields) {
+    const text = typeof value?.[field] === 'string' ? value[field].trim().slice(0, limits[field]) : '';
+    if (text) result[field] = text;
+  }
+  if (result.language && !['en', 'ta', 'kn'].includes(result.language)) delete result.language;
+  return result;
+}
+async function getFarmerProfile(userId) {
+  if (profilePool) {
+    let rows;
+    try { ({ rows } = await profilePool.query('SELECT preferences, updated_at FROM farmer_profiles WHERE user_id = $1', [userId])); }
+    catch { throw Object.assign(new Error('Profile database is unavailable.'), { status: 503 }); }
+    return rows[0] ? { preferences: rows[0].preferences, updatedAt: rows[0].updated_at } : null;
+  }
+  return db.farmerProfiles[userId] || null;
+}
+async function saveFarmerProfile(userId, preferences) {
+  if (profilePool) {
+    let rows;
+    try { ({ rows } = await profilePool.query(`INSERT INTO farmer_profiles (user_id, preferences) VALUES ($1, $2::jsonb) ON CONFLICT (user_id) DO UPDATE SET preferences = EXCLUDED.preferences, updated_at = NOW() RETURNING preferences, updated_at`, [userId, JSON.stringify(preferences)])); }
+    catch { throw Object.assign(new Error('Profile database is unavailable.'), { status: 503 }); }
+    return { preferences: rows[0].preferences, updatedAt: rows[0].updated_at };
+  }
+  const profile = { preferences, updatedAt: new Date().toISOString() };
+  db.farmerProfiles[userId] = profile;
+  await persist();
+  return profile;
+}
+
+async function saveChatMemory(memory, body, reply) {
+  if (!memory.userId) return false;
+  try {
+    return await storeChatSummary({ userId: memory.userId, message: body.message, reply, language: body.language, module: 'crop-advisory' });
+  } catch (error) {
+    console.warn('Mem0 summary save failed:', error.message);
+    return false;
+  }
 }
 
 const categories = [
@@ -146,7 +216,26 @@ function evaluateSchemeEligibility(body) {
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = decodeURIComponent(url.pathname);
-  if (req.method === 'GET' && pathname === '/api/health') return send(res, 200, { service: 'nelam-middleware', mode: 'demo', persistentStore: 'local-json', integrations: { sarvam: Boolean(process.env.SARVAM_ADAPTER_URL || process.env.SARVAM_API_SUBSCRIPTION_KEY), knowledgeEngine: Boolean(process.env.KNOWLEDGE_ADAPTER_URL), weather: Boolean(process.env.WEATHER_ADAPTER_URL), dss: Boolean(process.env.DSS_ADAPTER_URL), schemeRegistry: Boolean(process.env.SCHEME_ADAPTER_URL), grievanceSystem: Boolean(process.env.GRIEVANCE_ADAPTER_URL), whatsapp: Boolean(process.env.WHATSAPP_ADAPTER_URL), ivr: ivrStatus.active } });
+  if (req.method === 'GET' && pathname === '/api/health') return send(res, 200, { service: 'nelam-middleware', mode: 'demo', persistentStore: profileStorage(), integrations: { sarvam: Boolean(process.env.SARVAM_ADAPTER_URL || process.env.SARVAM_API_SUBSCRIPTION_KEY), knowledgeEngine: Boolean(process.env.KNOWLEDGE_ADAPTER_URL), weather: Boolean(process.env.WEATHER_ADAPTER_URL), dss: Boolean(process.env.DSS_ADAPTER_URL), schemeRegistry: Boolean(process.env.SCHEME_ADAPTER_URL), grievanceSystem: Boolean(process.env.GRIEVANCE_ADAPTER_URL), whatsapp: Boolean(process.env.WHATSAPP_ADAPTER_URL), ivr: ivrStatus.active } });
+
+  if (req.method === 'GET' && pathname === '/api/memory/status') return send(res, 200, { configured: isMem0Configured(), provider: 'mem0', scope: 'phone-linked-user', requiresPhone: true });
+  if (req.method === 'GET' && pathname === '/api/profile/status') return send(res, 200, { configured: Boolean(profilePool), storage: profileStorage(), durable: Boolean(profilePool), phoneVerification: 'not-configured' });
+  if (req.method === 'GET' && pathname === '/api/profile') {
+    const phone = normalizePhoneNumber(req.headers['x-farmer-phone']);
+    const userId = phone && mem0UserIdForPhone(phone);
+    if (!userId) return send(res, 400, { error: 'A valid phone number is required.' });
+    const profile = await getFarmerProfile(userId);
+    return send(res, 200, { profile: profile?.preferences || {}, updatedAt: profile?.updatedAt || null, storage: profileStorage() });
+  }
+  if (req.method === 'PUT' && pathname === '/api/profile') {
+    const body = await jsonBody(req);
+    const phone = normalizePhoneNumber(body.phoneNumber);
+    const userId = phone && mem0UserIdForPhone(phone);
+    if (!userId) return send(res, 400, { error: 'A valid phone number is required.' });
+    const preferences = cleanPreferences(body.preferences);
+    const profile = await saveFarmerProfile(userId, preferences);
+    return send(res, 200, { profile: profile.preferences, updatedAt: profile.updatedAt, storage: profileStorage() });
+  }
 
   if (req.method === 'GET' && pathname === '/api/ivr/status') return send(res, 200, { ...ivrStatus, publicStreamUrl: process.env.PUBLIC_WSS_URL || null, requires: ['Exotel ExoPhone + Voicebot applet', 'SARVAM_API_SUBSCRIPTION_KEY', 'IVR_STREAM_TOKEN', 'public TLS WSS deployment', 'SARVAM_ADAPTER_URL for conversational routing'] });
 
@@ -168,7 +257,9 @@ async function handle(req, res) {
 
   if (req.method === 'POST' && pathname === '/api/crop/advisory') {
     const body = await jsonBody(req);
-    const base = { ...body, channel: 'web-demo' };
+    const memory = await loadChatMemory(body);
+    const { phoneNumber: _phoneNumber, ...safeBody } = body;
+    const base = { ...safeBody, channel: 'web-demo', memoryContext: memory.summaries };
     const [knowledge, weather, dss] = await Promise.all([
       callAdapter(process.env.KNOWLEDGE_ADAPTER_URL, 'crop-advisory', base),
       /weather|rain|மழை|மழை|ಮಳೆ/i.test(body.message || '') ? callAdapter(process.env.WEATHER_ADAPTER_URL, 'forecast', base) : null,
@@ -179,9 +270,10 @@ async function handle(req, res) {
       'Demo response: add Sarvam Conversational AI, Knowledge Engine, live weather and DSS adapters for grounded farm guidance.',
       'மாதிரி பதில்: துல்லியமான பண்ணை ஆலோசனைக்கு சர்வம், நேரடி வானிலை மற்றும் DSS இணைப்புகளை அமைக்கவும்.',
       'ಮಾದರಿ ಉತ್ತರ: ನಿಖರ ಕೃಷಿ ಸಲಹೆಗಾಗಿ ಸರ್ವಂ, ನೈಜ ಹವಾಮಾನ ಮತ್ತು DSS ಸಂಪರ್ಕಗಳನ್ನು ಹೊಂದಿಸಿ.');
+    const memoryStored = await saveChatMemory(memory, body, reply);
     const record = { id: randomUUID(), message: body.message || '', language: body.language || 'ta', createdAt: new Date().toISOString(), source: speechAnswer ? 'sarvam-adapter' : knowledge ? 'knowledge-engine' : 'demo' };
     db.conversations.unshift(record); db.conversations.length = Math.min(db.conversations.length, 500); await persist();
-    return send(res, 200, { reply, language: body.language || 'ta', sources: speechAnswer?.sources || knowledge?.sources || dss?.sources || [], weather: weather || undefined, dssRecommendation: dss || undefined, mode: speechAnswer || knowledge || weather || dss ? 'connected-adapter' : 'demo' });
+    return send(res, 200, { reply, language: body.language || 'ta', sources: speechAnswer?.sources || knowledge?.sources || dss?.sources || [], weather: weather || undefined, dssRecommendation: dss || undefined, memory: { available: isMem0Configured(), requested: body.rememberChat === true, saved: memoryStored, recalled: memory.summaries.length, phoneRequired: body.rememberChat === true && !memory.userId }, mode: speechAnswer || knowledge || weather || dss ? 'connected-adapter' : 'demo' });
   }
 
   if (req.method === 'POST' && pathname === '/api/crop/voice') {

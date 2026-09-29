@@ -6,7 +6,15 @@ A responsive prototype for a Tamil-first / Kannada-first farm assistant across W
 
 Install Node.js 20 or newer and run `npm start` in this directory. Open `http://localhost:4173`. The local server persists demo grievance records, scheme checks and recent advisory context in `data/demo-store.json`; this file is git-ignored and is not a production datastore. The admin support endpoints are `GET /api/admin/grievances` and `GET /api/admin/eligibility-checks` (protect them with authentication before deployment). The optional browser setting `window.NELAM_API_BASE` selects the middleware base URL; it defaults to `/api`.
 
-Copy `.env.example` to `.env` as a reference and set the adapter URLs in the server process environment. The sample server does not load `.env` automatically. Provider API keys belong in the secured adapter service, never in browser code. Without adapter URLs, text advice and scheme checks are demonstrations, and grievance IDs/statuses exist only in the local demo register.
+Copy `.env.example` to `.env` as a reference and set the adapter URLs in the server process environment. The server loads `.env` locally when present. Provider API keys belong in server-side environment settings, never in browser code. Without adapter URLs, text advice and scheme checks are demonstrations, and grievance IDs/statuses exist only in the local demo register.
+
+## Farmer profiles and chat memory
+
+The crop advisory panel lets a farmer save preferred crop, fertilizer choices, soil type, irrigation method, location and language against their phone number. `GET /api/profile` reads a profile using the `X-Farmer-Phone` header; `PUT /api/profile` saves it. The server normalizes the phone number and stores only a keyed HMAC identifier, never the raw number. Set a long, stable `USER_ID_SECRET` in the server environment so the identifier remains consistent across deployments. Phone ownership is **not verified** in this prototype; do not use phone number alone as authentication for sensitive information.
+
+When PostgreSQL is configured with `DATABASE_URL`, profiles are stored in the `farmer_profiles` table (created automatically). `DATABASE_SSL=true` enables TLS with certificate verification disabled, intended for providers requiring that connection mode; prefer provider-recommended TLS configuration for production. Without a working database, the service uses `data/demo-store.json` and labels the profile as local demo storage. That file is ephemeral on Render's free web service and must not be treated as durable storage.
+
+The farmer must opt in using the Mem0 checkbox before chat summaries are searched or saved. A phone-linked HMAC identifier is used with Mem0; the raw number is not sent to Mem0. Set `MEM0_API_KEY` to enable it and keep the key server-side. Profile preference storage is separate from Mem0 and does not require Mem0 to be enabled. Render's free filesystem and free database offerings are not a durability guarantee; provision a database appropriate for the required retention period before relying on saved farmer preferences.
 
 ## Intended service flow
 

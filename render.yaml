@@ -21,3 +21,13 @@ services:
         sync: false
       - key: PUBLIC_WSS_URL
         sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "false"
+      - key: USER_ID_SECRET
+        generateValue: true
+      - key: MEM0_API_KEY
+        sync: false
+      - key: MEM0_BASE_URL
+        value: https://api.mem0.ai
