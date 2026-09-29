@@ -150,9 +150,10 @@ async function jsonBody(req) {
   catch { throw Object.assign(new Error('Expected a JSON request body'), { status: 400 }); }
 }
 
-function localized(language, english, tamil, kannada) {
+function localized(language, english, tamil, kannada, hindi) {
   if (language === 'ta') return tamil;
   if (language === 'kn') return kannada;
+  if (language === 'hi') return hindi || english;
   return english;
 }
 
@@ -187,7 +188,7 @@ function cleanPreferences(value) {
     const text = typeof value?.[field] === 'string' ? value[field].trim().slice(0, limits[field]) : '';
     if (text) result[field] = text;
   }
-  if (result.language && !['en', 'ta', 'kn'].includes(result.language)) delete result.language;
+  if (result.language && !['en', 'ta', 'kn', 'hi'].includes(result.language)) delete result.language;
   return result;
 }
 async function getFarmerProfile(userId) {
@@ -489,11 +490,12 @@ async function handle(req, res) {
     const adapter = process.env.IVR_ADAPTER_URL || process.env.SARVAM_ADAPTER_URL;
     const route = process.env.IVR_ADAPTER_URL ? 'turn' : 'conversation';
     const answer = adapter ? await callAdapter(adapter, route, { ...body, message: body.transcript, module: 'farm-assistant' }) : null;
-    const language = body.language === 'kn-IN' ? 'kn' : 'ta';
+    const language = body.language === 'kn-IN' ? 'kn' : body.language === 'hi-IN' ? 'hi' : body.language === 'en-IN' ? 'en' : body.language === 'hi' ? 'hi' : 'ta';
     const reply = answer?.reply || localized(language,
       'The IVR is connected in demo mode. Add the Sarvam conversation adapter for live crop, scheme and grievance help.',
       'தொலைபேசி உதவி மாதிரி நிலையில் உள்ளது. பயிர், திட்டம் மற்றும் புகார் உதவிக்கு சர்வம் உரையாடல் இணைப்பை அமைக்கவும்.',
-      'ಫೋನ್ ಸಹಾಯಕ ಡೆಮೋ ಸ್ಥಿತಿಯಲ್ಲಿದೆ. ಬೆಳೆ, ಯೋಜನೆ ಮತ್ತು ದೂರು ಸಹಾಯಕ್ಕಾಗಿ ಸರ್ವಂ ಸಂಭಾಷಣೆ ಅಡಾಪ್ಟರ್ ಹೊಂದಿಸಿ.');
+      'ಫೋನ್ ಸಹಾಯಕ ಡೆಮೋ ಸ್ಥಿತಿಯಲ್ಲಿದೆ. ಬೆಳೆ, ಯೋಜನೆ ಮತ್ತು ದೂರು ಸಹಾಯಕ್ಕಾಗಿ ಸರ್ವಂ ಸಂಭಾಷಣೆ ಅಡಾಪ್ಟರ್ ಹೊಂದಿಸಿ.',
+      'फोन सहायता अभी डेमो मोड में है। फसल, योजना और शिकायत सहायता के लिए Sarvam संवाद एडेप्टर जोड़ें।');
     db.conversations.unshift({ id: randomUUID(), message: body.transcript, language, channel: 'ivr', createdAt: new Date().toISOString(), source: answer ? 'ivr-adapter' : 'demo' });
     await persist();
     return send(res, 200, { reply, language: answer?.language || language, mode: answer ? 'connected-adapter' : 'demo', module: answer?.module || 'farm-assistant' });
@@ -519,7 +521,8 @@ async function handle(req, res) {
     const reply = speechAnswer?.reply || dss?.reply || weather?.reply || knowledge?.reply || savedGrievanceReply || localized(body.language,
       'Demo response: add Sarvam Conversational AI, Knowledge Engine, live weather and DSS adapters for grounded farm guidance.',
       'மாதிரி பதில்: துல்லியமான பண்ணை ஆலோசனைக்கு சர்வம், நேரடி வானிலை மற்றும் DSS இணைப்புகளை அமைக்கவும்.',
-      'ಮಾದರಿ ಉತ್ತರ: ನಿಖರ ಕೃಷಿ ಸಲಹೆಗಾಗಿ ಸರ್ವಂ, ನೈಜ ಹವಾಮಾನ ಮತ್ತು DSS ಸಂಪರ್ಕಗಳನ್ನು ಹೊಂದಿಸಿ.');
+      'ಮಾದರಿ ಉತ್ತರ: ನಿಖರ ಕೃಷಿ ಸಲಹೆಗಾಗಿ ಸರ್ವಂ, ನೈಜ ಹವಾಮಾನ ಮತ್ತು DSS ಸಂಪರ್ಕಗಳನ್ನು ಹೊಂದಿಸಿ.',
+      'डेमो उत्तर: प्रमाणित खेती सलाह के लिए Sarvam Conversational AI, Knowledge Engine, लाइव मौसम और DSS एडेप्टर जोड़ें।');
     const memoryStored = await saveChatMemory(memory, body, reply);
     const record = { id: randomUUID(), message: body.message || '', language: body.language || 'ta', createdAt: new Date().toISOString(), source: speechAnswer ? 'sarvam-adapter' : knowledge ? 'knowledge-engine' : 'demo' };
     db.conversations.unshift(record); db.conversations.length = Math.min(db.conversations.length, 500); await persist();

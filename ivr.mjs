@@ -85,11 +85,12 @@ export function attachIvr(server) {
         stt = new WebSocket(sarvamUrl, { headers: { 'api-subscription-key': sarvamKey } });
         stt.on('open', async () => {
           try {
-            const [taPrompt, knPrompt] = await Promise.all([
+            const [taPrompt, knPrompt, hiPrompt] = await Promise.all([
               makeSpeech('வணக்கம். தமிழில் பேசுங்கள். பயிர் ஆலோசனை, திட்ட உதவி அல்லது புகார் பற்றி கேளுங்கள்.', 'ta-IN', sarvamKey),
-              makeSpeech('ನಮಸ್ಕಾರ. ಕನ್ನಡದಲ್ಲಿ ಮಾತನಾಡಿ. ಬೆಳೆ ಸಲಹೆ, ಯೋಜನೆ ಅಥವಾ ದೂರು ಬಗ್ಗೆ ಕೇಳಿ.', 'kn-IN', sarvamKey)
+              makeSpeech('ನಮಸ್ಕಾರ. ಕನ್ನಡದಲ್ಲಿ ಮಾತನಾಡಿ. ಬೆಳೆ ಸಲಹೆ, ಯೋಜನೆ ಅಥವಾ ದೂರು ಬಗ್ಗೆ ಕೇಳಿ.', 'kn-IN', sarvamKey),
+              makeSpeech('नमस्ते। हिंदी में बात करें। फसल सलाह, योजना या शिकायत के बारे में पूछें।', 'hi-IN', sarvamKey)
             ]);
-            sendExotelAudio(exotel, streamSid, Buffer.concat([taPrompt, knPrompt]));
+            sendExotelAudio(exotel, streamSid, Buffer.concat([taPrompt, knPrompt, hiPrompt]));
           } catch (error) { console.error('IVR greeting failed:', error.message); }
         });
         stt.on('message', async message => {
@@ -98,7 +99,7 @@ export function attachIvr(server) {
           if (result.event === 'error') { console.error('Sarvam STT error:', result.message); return; }
           if (result.event !== 'transcript.final' || !result.text?.trim() || responseBusy || callEnded) return;
           responseBusy = true;
-          detectedLanguage = result.language === 'kn-IN' ? 'kn-IN' : result.language === 'ta-IN' ? 'ta-IN' : detectedLanguage;
+          detectedLanguage = ['kn-IN', 'ta-IN', 'hi-IN'].includes(result.language) ? result.language : detectedLanguage;
           try {
             const answer = await answerTurn(result.text.trim(), detectedLanguage);
             const reply = answer.reply || answer.answer;
