@@ -3,10 +3,71 @@ const views = ['home', 'crop', 'schemes', 'grievance'];
 const activity = [];
 let toastTimer;
 let mem0Available = false;
+let signedInUser = null;
+
+const authScreen = document.getElementById('authScreen');
+const appShell = document.getElementById('appShell');
+const authStatus = document.getElementById('authStatus');
+let authMode = 'login';
+function setAuthMode(mode, message = '') {
+  authMode = mode;
+  const registering = mode === 'register';
+  document.getElementById('authLoginMode').classList.toggle('active', !registering);
+  document.getElementById('authRegisterMode').classList.toggle('active', registering);
+  document.getElementById('authLoginMode').setAttribute('aria-selected', String(!registering));
+  document.getElementById('authRegisterMode').setAttribute('aria-selected', String(registering));
+  document.getElementById('authNameField').hidden = !registering;
+  document.getElementById('authName').required = registering;
+  document.getElementById('authConfirmField').hidden = !registering;
+  document.getElementById('authConfirm').required = registering;
+  document.getElementById('authPassword').autocomplete = registering ? 'new-password' : 'current-password';
+  document.getElementById('authTitle').textContent = registering ? 'Create your account' : 'Welcome to Nelam';
+  document.getElementById('authDescription').textContent = registering ? 'Choose a phone number or email and create a password for your farm account.' : 'Sign in with your phone number or email and password.';
+  document.getElementById('authSubmit').innerHTML = registering ? 'Register <span>→</span>' : 'Sign in <span>→</span>';
+  authStatus.textContent = message;
+}
+async function enterApp(user) {
+  signedInUser = user;
+  authScreen.hidden = true;
+  appShell.hidden = false;
+  const name = user.name || 'Farmer';
+  document.getElementById('sidebarUserName').textContent = name;
+  document.getElementById('welcomeName').textContent = name;
+  document.getElementById('userAvatar').textContent = [...name][0]?.toUpperCase() || 'F';
+  updateMemoryConsentCopy();
+  await loadFarmerProfile();
+}
+async function refreshAuth() {
+  try {
+    const [statusResponse, sessionResponse] = await Promise.all([fetch(`${API_BASE}/auth/status`), fetch(`${API_BASE}/auth/session`)]);
+    const status = await statusResponse.json(); const session = await sessionResponse.json();
+    document.getElementById('authSubmit').disabled = !status.enabled;
+    if (!status.enabled) { setAuthMode('login', 'Sign-in is unavailable. Configure a stable session secret on the server.'); return; }
+    if (!session.authenticated) { setAuthMode('login'); return; }
+    await enterApp(session.user);
+  } catch (_) { setAuthMode('login', 'Could not connect to sign-in. Please refresh and try again.'); }
+}
+document.getElementById('authLoginMode').addEventListener('click', () => setAuthMode('login'));
+document.getElementById('authRegisterMode').addEventListener('click', () => setAuthMode('register'));
+document.getElementById('authForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (authMode === 'register' && document.getElementById('authPassword').value !== document.getElementById('authConfirm').value) { authStatus.textContent = 'The passwords do not match.'; return; }
+  const button = document.getElementById('authSubmit'); button.disabled = true; authStatus.textContent = authMode === 'register' ? 'Creating your account…' : 'Signing in…';
+  try {
+    const route = authMode === 'register' ? 'register' : 'login';
+    const payload = { contact: document.getElementById('authContact').value.trim(), password: document.getElementById('authPassword').value };
+    if (authMode === 'register') payload.name = document.getElementById('authName').value.trim();
+    const response = await fetch(`${API_BASE}/auth/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Could not access your account.'); await enterApp(result.user);
+  } catch (error) { authStatus.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+document.getElementById('logoutButton').addEventListener('click', async () => { await fetch(`${API_BASE}/auth/logout`, { method: 'POST' }); signedInUser = null; appShell.hidden = true; authScreen.hidden = false; document.getElementById('authPassword').value = ''; document.getElementById('authConfirm').value = ''; setAuthMode('login', 'You have signed out.'); });
+refreshAuth();
 const memoryCopy = {
-  en: { label: 'Optionally save short chat summaries to Mem0, linked to your phone number.', checking: 'Checking whether memory storage is available…', unavailable: 'Mem0 is not configured on this service, so nothing will be sent or saved.', off: 'Enter your phone number below to link summaries to your account.', on: 'Memory is on for this phone number. You can turn it off for future chats.', saved: 'Summary sent to Mem0 for this phone-linked account.' },
-  ta: { label: 'தொலைபேசி எண்ணுடன் இணைத்து உரையாடல் சுருக்கங்களை Mem0-இல் விருப்பமாகச் சேமிக்கவும்.', checking: 'நினைவக சேமிப்பு உள்ளதா எனச் சரிபார்க்கிறது…', unavailable: 'இந்த சேவையில் Mem0 அமைக்கப்படவில்லை; எதுவும் அனுப்பவோ சேமிக்கவோ மாட்டோம்.', off: 'சுருக்கங்களை உங்கள் கணக்குடன் இணைக்க கீழே தொலைபேசி எண்ணை உள்ளிடவும்.', on: 'இந்த எண்ணுக்கான நினைவகம் இயக்கப்பட்டுள்ளது. அடுத்த உரையாடல்களுக்கு அணைக்கலாம்.', saved: 'இந்த தொலைபேசி கணக்கிற்கான சுருக்கம் Mem0-க்கு அனுப்பப்பட்டது.' },
-  kn: { label: 'ಫೋನ್ ಸಂಖ್ಯೆಗೆ ಜೋಡಿಸಿ ಚಾಟ್ ಸಾರಾಂಶಗಳನ್ನು Mem0 ನಲ್ಲಿ ಐಚ್ಛಿಕವಾಗಿ ಉಳಿಸಿ.', checking: 'ಮೆಮೊರಿ ಸಂಗ್ರಹ ಲಭ್ಯವಿದೆಯೇ ಎಂದು ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ…', unavailable: 'ಈ ಸೇವೆಯಲ್ಲಿ Mem0 ಹೊಂದಿಸಿಲ್ಲ; ಯಾವುದನ್ನೂ ಕಳುಹಿಸುವುದಿಲ್ಲ ಅಥವಾ ಉಳಿಸುವುದಿಲ್ಲ.', off: 'ಸಾರಾಂಶಗಳನ್ನು ಖಾತೆಗೆ ಜೋಡಿಸಲು ಕೆಳಗೆ ಫೋನ್ ಸಂಖ್ಯೆಯನ್ನು ನಮೂದಿಸಿ.', on: 'ಈ ಫೋನ್ ಸಂಖ್ಯೆಗೆ ಮೆಮೊರಿ ಸಕ್ರಿಯವಾಗಿದೆ. ಮುಂದಿನ ಚಾಟ್‌ಗಳಿಗೆ ನಿಲ್ಲಿಸಬಹುದು.', saved: 'ಈ ಫೋನ್ ಖಾತೆಯ ಸಾರಾಂಶವನ್ನು Mem0 ಗೆ ಕಳುಹಿಸಲಾಗಿದೆ.' }
+  en: { label: 'Optionally save short chat summaries to Mem0 for this account.', checking: 'Checking whether memory storage is available…', unavailable: 'Mem0 is not configured on this service, so nothing will be sent or saved.', off: 'Turn on to link summaries to your account.', on: 'Memory is on for this account. You can turn it off for future chats.', saved: 'Summary sent to Mem0 for this account.' },
+  ta: { label: 'இந்தக் கணக்கிற்காக உரையாடல் சுருக்கங்களை Mem0-இல் விருப்பமாகச் சேமிக்கவும்.', checking: 'நினைவக சேமிப்பு உள்ளதா எனச் சரிபார்க்கிறது…', unavailable: 'இந்த சேவையில் Mem0 அமைக்கப்படவில்லை; எதுவும் அனுப்பவோ சேமிக்கவோ மாட்டோம்.', off: 'சுருக்கங்களை உங்கள் கணக்குடன் இணைக்க இயக்கவும்.', on: 'இந்தக் கணக்கிற்கு நினைவகம் இயக்கப்பட்டுள்ளது. அடுத்த உரையாடல்களுக்கு அணைக்கலாம்.', saved: 'இந்தக் கணக்கிற்கான சுருக்கம் Mem0-க்கு அனுப்பப்பட்டது.' },
+  kn: { label: 'ಈ ಖಾತೆಗೆ ಚಾಟ್ ಸಾರಾಂಶಗಳನ್ನು Mem0 ನಲ್ಲಿ ಐಚ್ಛಿಕವಾಗಿ ಉಳಿಸಿ.', checking: 'ಮೆಮೊರಿ ಸಂಗ್ರಹ ಲಭ್ಯವಿದೆಯೇ ಎಂದು ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ…', unavailable: 'ಈ ಸೇವೆಯಲ್ಲಿ Mem0 ಹೊಂದಿಸಿಲ್ಲ; ಯಾವುದನ್ನೂ ಕಳುಹಿಸುವುದಿಲ್ಲ ಅಥವಾ ಉಳಿಸುವುದಿಲ್ಲ.', off: 'ಸಾರಾಂಶಗಳನ್ನು ನಿಮ್ಮ ಖಾತೆಗೆ ಜೋಡಿಸಲು ಸಕ್ರಿಯಗೊಳಿಸಿ.', on: 'ಈ ಖಾತೆಗೆ ಮೆಮೊರಿ ಸಕ್ರಿಯವಾಗಿದೆ. ಮುಂದಿನ ಚಾಟ್‌ಗಳಿಗೆ ನಿಲ್ಲಿಸಬಹುದು.', saved: 'ಈ ಖಾತೆಯ ಸಾರಾಂಶವನ್ನು Mem0 ಗೆ ಕಳುಹಿಸಲಾಗಿದೆ.' }
 };
 
 function updateMemoryConsentCopy(saved = false) {
@@ -15,7 +76,8 @@ function updateMemoryConsentCopy(saved = false) {
   const checkbox = document.getElementById('rememberChat');
   if (!checkbox) return;
   let consent = false;
-  try { consent = localStorage.getItem('nelam-memory-consent') === 'yes'; } catch (_) { /* Storage may be unavailable in private browsing. */ }
+  const consentKey = `nelam-memory-consent:${signedInUser?.accountKey || 'signed-out'}`;
+  try { consent = localStorage.getItem(consentKey) === 'yes'; } catch (_) { /* Storage may be unavailable in private browsing. */ }
   checkbox.disabled = !mem0Available;
   checkbox.checked = mem0Available && consent;
   document.getElementById('memoryConsentCopy').textContent = copy.label;
@@ -28,7 +90,8 @@ fetch(`${API_BASE}/memory/status`).then(response => response.json()).then(status
 }).catch(() => updateMemoryConsentCopy());
 
 document.getElementById('rememberChat').addEventListener('change', event => {
-  try { localStorage.setItem('nelam-memory-consent', event.target.checked ? 'yes' : 'no'); } catch (_) { /* Consent remains for this page view. */ }
+  const consentKey = `nelam-memory-consent:${signedInUser?.accountKey || 'signed-out'}`;
+  try { localStorage.setItem(consentKey, event.target.checked ? 'yes' : 'no'); } catch (_) { /* Consent remains for this page view. */ }
   updateMemoryConsentCopy();
 });
 
@@ -36,28 +99,24 @@ const profileForm = document.getElementById('farmerProfileForm');
 const profileInputs = { crop: 'profileCrop', fertilizerChoices: 'profileFertilizer', soilType: 'profileSoil', irrigation: 'profileIrrigation', farmLocation: 'profileLocation' };
 function profileMessage(en, ta, kn) { const lang = document.getElementById('language').value; return lang === 'ta' ? ta : lang === 'kn' ? kn : en; }
 async function loadFarmerProfile() {
-  const phoneNumber = document.getElementById('profilePhone').value.trim();
-  if (!phoneNumber) return;
   const status = document.getElementById('profileStatus');
   status.textContent = profileMessage('Loading saved preferences…', 'சேமித்த விருப்பங்களை ஏற்றுகிறது…', 'ಉಳಿಸಿದ ಆದ್ಯತೆಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ…');
   try {
-    const response = await fetch(`${API_BASE}/profile`, { headers: { 'X-Farmer-Phone': phoneNumber } });
+    const response = await fetch(`${API_BASE}/profile`);
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not load profile');
     for (const [key, id] of Object.entries(profileInputs)) document.getElementById(id).value = data.profile?.[key] || '';
     status.textContent = data.storage === 'postgres' ? profileMessage('Saved profile loaded from the database.', 'தரவுத்தளத்தில் சேமித்த சுயவிவரம் ஏற்றப்பட்டது.', 'ಡೇಟಾಬೇಸ್‌ನಿಂದ ಉಳಿಸಿದ ಪ್ರೊಫೈಲ್ ಲೋಡ್ ಆಯಿತು.') : profileMessage('Local demo profile loaded. Connect a database for durable storage.', 'உள்ளூர் மாதிரி சுயவிவரம் ஏற்றப்பட்டது. நீடித்த சேமிப்புக்கு தரவுத்தளத்தை இணைக்கவும்.', 'ಸ್ಥಳೀಯ ಡೆಮೊ ಪ್ರೊಫೈಲ್ ಲೋಡ್ ಆಯಿತು. ಶಾಶ್ವತ ಸಂಗ್ರಹಕ್ಕೆ ಡೇಟಾಬೇಸ್ ಸಂಪರ್ಕಿಸಿ.');
-  } catch (_) { status.textContent = profileMessage('Enter a valid phone number to load a profile.', 'சுயவிவரத்தை ஏற்ற சரியான தொலைபேசி எண்ணை உள்ளிடவும்.', 'ಪ್ರೊಫೈಲ್ ಲೋಡ್ ಮಾಡಲು ಸರಿಯಾದ ಫೋನ್ ಸಂಖ್ಯೆಯನ್ನು ನಮೂದಿಸಿ.'); }
+  } catch (_) { status.textContent = profileMessage('Could not load your saved preferences.', 'சேமித்த விருப்பங்களை ஏற்ற முடியவில்லை.', 'ಉಳಿಸಿದ ಆದ್ಯತೆಗಳನ್ನು ಲೋಡ್ ಮಾಡಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ.'); }
 }
-document.getElementById('profilePhone').addEventListener('blur', loadFarmerProfile);
 profileForm.addEventListener('submit', async event => {
   event.preventDefault();
   const status = document.getElementById('profileStatus');
-  const phoneNumber = document.getElementById('profilePhone').value.trim();
   const preferences = Object.fromEntries(Object.entries(profileInputs).map(([key, id]) => [key, document.getElementById(id).value.trim()]));
   preferences.language = document.getElementById('language').value;
   status.textContent = profileMessage('Saving…', 'சேமிக்கிறது…', 'ಉಳಿಸಲಾಗುತ್ತಿದೆ…');
   try {
-    const response = await fetch(`${API_BASE}/profile`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phoneNumber, preferences }) });
+    const response = await fetch(`${API_BASE}/profile`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preferences }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Save failed');
     status.textContent = data.storage === 'postgres' ? profileMessage('Preferences saved to the database.', 'விருப்பங்கள் தரவுத்தளத்தில் சேமிக்கப்பட்டன.', 'ಆದ್ಯತೆಗಳನ್ನು ಡೇಟಾಬೇಸ್‌ನಲ್ಲಿ ಉಳಿಸಲಾಗಿದೆ.') : profileMessage('Saved in local demo storage; connect a database for durable storage.', 'உள்ளூர் மாதிரியில் சேமிக்கப்பட்டது; நீடித்த சேமிப்புக்கு தரவுத்தளத்தை இணைக்கவும்.', 'ಸ್ಥಳೀಯ ಡೆಮೊದಲ್ಲಿ ಉಳಿಸಲಾಗಿದೆ; ಶಾಶ್ವತ ಸಂಗ್ರಹಕ್ಕೆ ಡೇಟಾಬೇಸ್ ಸಂಪರ್ಕಿಸಿ.');
@@ -232,7 +291,7 @@ async function askAdvisory(message, extra = {}) {
   try {
     const response = await fetch(`${API_BASE}/crop/advisory`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, language: document.getElementById('language').value, location: document.getElementById('profileLocation').value || 'Mandya, Karnataka', phoneNumber: document.getElementById('profilePhone').value.trim(), rememberChat: document.getElementById('rememberChat').checked, ...extra })
+      body: JSON.stringify({ message, language: document.getElementById('language').value, location: document.getElementById('profileLocation').value || 'Mandya, Karnataka', rememberChat: document.getElementById('rememberChat').checked, ...extra })
     });
     if (response.ok) {
       const data = await response.json();
@@ -264,7 +323,7 @@ document.getElementById('chatForm').addEventListener('submit', event => {
 });
 document.querySelectorAll('.quick-prompts button').forEach(button => button.addEventListener('click', () => askAdvisory(button.dataset.prompt)));
 document.getElementById('newChat').addEventListener('click', () => {
-  document.getElementById('chatBody').innerHTML = '<div class="bot-message"><span class="mini-avatar">நி</span><div><small>Vanakkam, Ravi! 🌱</small><p>What would you like help with on your farm today?</p><time>Just now</time></div></div>';
+  document.getElementById('chatBody').innerHTML = `<div class="bot-message"><span class="mini-avatar">நி</span><div><small>Vanakkam, ${escapeHtml(signedInUser?.name || 'Farmer')}! 🌱</small><p>What would you like help with on your farm today?</p><time>Just now</time></div></div>`;
 });
 
 document.getElementById('cropPhoto').addEventListener('change', event => {
@@ -446,7 +505,7 @@ function addFilingDetails() {
   if (filingDetailsAdded) return;
   const state = grievanceState.value;
   const isKarnataka = state === 'Karnataka';
-  const profilePhone = document.getElementById('profilePhone')?.value.trim() || '';
+  const profilePhone = '';
   const location = document.getElementById('profileLocation')?.value.trim() || '';
   const addressParts = location.split(',').map(part => part.trim()).filter(Boolean);
   const required = '<span class="required-mark">Required</span>';
@@ -500,8 +559,8 @@ grievanceForm.addEventListener('submit', event => {
   success.querySelector('#anotherGrievance').addEventListener('click', () => { success.hidden = true; document.getElementById('grievanceFormWrap').hidden = false; grievanceForm.reset(); grievanceForm.querySelector('#filingDetails')?.remove(); filingDetailsAdded = false; grievanceState.disabled = false; grievanceForm.querySelector('.primary-button').innerHTML = 'Get filing links <span>→</span>'; issueCategory.value = 'Crop damage / insurance'; grievanceState.value = 'Karnataka'; updateDepartmentRouting(); });
 });
 
-function renderSavedGrievances(records, container, phone) {
-  if (!records.length) { container.innerHTML = '<p class="tracking-empty">No saved IDs found for this phone number.</p>'; return; }
+function renderSavedGrievances(records, container) {
+  if (!records.length) { container.innerHTML = '<p class="tracking-empty">No saved grievance IDs for this account yet.</p>'; return; }
   const groups = new Map();
   records.forEach(row => { if (!groups.has(row.caseId)) groups.set(row.caseId, []); groups.get(row.caseId).push(row); });
   container.innerHTML = [...groups.entries()].map(([caseId, items]) => {
@@ -512,7 +571,7 @@ function renderSavedGrievances(records, container, phone) {
     return `<article class="saved-grievance"><b>${escapeHtml(first.category)} · ${escapeHtml(first.state)}</b>${stages}<small class="tracking-note">Saved status is entered by you; it is not confirmed by the government system.</small>${escalate}</article>`;
   }).join('');
   container.querySelectorAll('[data-status-id]').forEach(select => select.addEventListener('change', async () => {
-    try { const response = await fetch(`/api/grievance-tracking/${encodeURIComponent(select.dataset.statusId)}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ phoneNumber: phone, status: select.value }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); toast('Saved status updated'); }
+    try { const response = await fetch(`/api/grievance-tracking/${encodeURIComponent(select.dataset.statusId)}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ status: select.value }) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); toast('Saved status updated'); }
     catch (error) { toast(error.message || 'Could not update status'); }
   }));
   container.querySelectorAll('.escalate-grievance').forEach(button => button.addEventListener('click', () => {
@@ -520,25 +579,22 @@ function renderSavedGrievances(records, container, phone) {
     document.getElementById('trackingState').value = button.dataset.state;
     document.getElementById('trackingCategory').value = button.dataset.category;
     document.getElementById('trackingLevel').value = 'higher'; refreshTrackingPortalOptions();
-    document.getElementById('trackingPhone').value = phone; document.getElementById('trackingFindPhone').value = phone;
     document.getElementById('trackingId').focus();
     toast('After filing the appeal, enter the new authority’s tracking ID');
   }));
 }
 document.getElementById('trackingFindForm').addEventListener('submit', async event => {
   event.preventDefault();
-  const phone = document.getElementById('trackingFindPhone').value.trim();
   const target = document.getElementById('savedGrievances'); target.innerHTML = '<p class="tracking-empty">Loading saved grievances…</p>';
-  try { const response = await fetch('/api/grievance-tracking', { headers:{'X-Farmer-Phone': phone} }); const result = await response.json(); if (!response.ok) throw new Error(result.error); renderSavedGrievances(result.grievances, target, phone); }
+  try { const response = await fetch('/api/grievance-tracking'); const result = await response.json(); if (!response.ok) throw new Error(result.error); renderSavedGrievances(result.grievances, target); }
   catch (error) { target.innerHTML = `<p class="tracking-empty">${escapeHtml(error.message || 'Could not load saved grievances.')}</p>`; }
 });
 document.getElementById('trackingSaveForm').addEventListener('submit', async event => {
   event.preventDefault();
-  const phone = document.getElementById('trackingPhone').value.trim();
-  const body = { phoneNumber:phone, caseId:document.getElementById('trackingCaseId').value || undefined, state:document.getElementById('trackingState').value, category:document.getElementById('trackingCategory').value, authorityLevel:document.getElementById('trackingLevel').value, portal:document.getElementById('trackingPortal').value, portalUrl:trackingPortalOptions[document.getElementById('trackingPortal').value], trackingId:document.getElementById('trackingId').value.trim(), status:document.getElementById('trackingStatus').value, consent:document.getElementById('trackingConsent').checked };
+  const body = { caseId:document.getElementById('trackingCaseId').value || undefined, state:document.getElementById('trackingState').value, category:document.getElementById('trackingCategory').value, authorityLevel:document.getElementById('trackingLevel').value, portal:document.getElementById('trackingPortal').value, portalUrl:trackingPortalOptions[document.getElementById('trackingPortal').value], trackingId:document.getElementById('trackingId').value.trim(), status:document.getElementById('trackingStatus').value, consent:document.getElementById('trackingConsent').checked };
   try {
     const response = await fetch('/api/grievance-tracking', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }); const result = await response.json(); if (!response.ok) throw new Error(result.error);
-    document.getElementById('trackingFindPhone').value = phone; document.getElementById('trackingCaseId').value = ''; document.getElementById('trackingId').value = ''; document.getElementById('trackingConsent').checked = false;
+    document.getElementById('trackingCaseId').value = ''; document.getElementById('trackingId').value = ''; document.getElementById('trackingConsent').checked = false;
     const findForm = document.getElementById('trackingFindForm'); findForm.requestSubmit(); toast('Official tracking ID saved');
   } catch (error) { toast(error.message || 'Could not save tracking ID'); }
 });

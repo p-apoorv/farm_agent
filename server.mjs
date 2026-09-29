@@ -1,10 +1,11 @@
 import http from 'node:http';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attachIvr } from './ivr.mjs';
-import { isMem0Configured, mem0UserIdForPhone, normalizePhoneNumber, searchUserMemories, storeChatSummary } from './mem0.mjs';
+import { isMem0Configured, normalizePhoneNumber, searchUserMemories, storeChatSummary } from './mem0.mjs';
 
 try { process.loadEnvFile(); } catch { /* Local .env is optional; deployments should inject environment variables. */ }
 
@@ -12,7 +13,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const dataPath = join(root, 'data', 'demo-store.json');
 const port = Number(process.env.PORT || 4173);
 const maxBodyBytes = 12 * 1024 * 1024;
-const db = { grievances: [], eligibilityChecks: [], conversations: [], farmerProfiles: {}, farmerGrievanceTracking: [] };
+const db = { grievances: [], eligibilityChecks: [], conversations: [], farmerProfiles: {}, farmerGrievanceTracking: [], authUsers: {} };
 const ivrStatus = {
   active: Boolean(process.env.SARVAM_API_SUBSCRIPTION_KEY && process.env.IVR_STREAM_TOKEN && process.env.PUBLIC_WSS_URL && (process.env.IVR_ADAPTER_URL || process.env.SARVAM_ADAPTER_URL)),
   hasSarvamKey: Boolean(process.env.SARVAM_API_SUBSCRIPTION_KEY),
@@ -33,18 +34,84 @@ if (process.env.DATABASE_URL) {
     profilePool = new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 10000, ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined });
     await profilePool.query(`CREATE TABLE IF NOT EXISTS farmer_profiles (user_id TEXT PRIMARY KEY, preferences JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await profilePool.query(`CREATE TABLE IF NOT EXISTS farmer_grievance_tracking (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, farmer_id TEXT NOT NULL, state TEXT NOT NULL, category TEXT NOT NULL, authority_level TEXT NOT NULL, portal TEXT NOT NULL, portal_url TEXT NOT NULL, tracking_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'submitted', filed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+    await profilePool.query(`CREATE TABLE IF NOT EXISTS auth_users (id TEXT PRIMARY KEY, contact_channel TEXT NOT NULL CHECK (contact_channel IN ('phone','email')), contact_value TEXT NOT NULL, name TEXT NOT NULL, password_salt TEXT NOT NULL, password_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+    await profilePool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS password_salt TEXT`);
+    await profilePool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS password_hash TEXT`);
   } catch (error) {
     console.error('Profile database initialization failed. Check DATABASE_URL and database availability.');
     profilePool = null;
   }
 }
 const profileStorage = () => profilePool ? 'postgres' : 'local-demo';
-function farmerTrackingId(phone) {
-  const secret = process.env.USER_ID_SECRET || process.env.MEM0_USER_ID_SECRET || process.env.MEM0_API_KEY || process.env.DATABASE_URL;
-  if (!secret) return null;
-  return createHmac('sha256', secret).update(phone).digest('hex');
+const authCookieName = 'nelam_session';
+const authSecret = process.env.AUTH_SESSION_SECRET || process.env.USER_ID_SECRET;
+const scryptAsync = promisify(scrypt);
+function authUserId(channel, contact) {
+  return authSecret ? createHmac('sha256', authSecret).update(`${channel}:${contact}`).digest('hex') : null;
 }
-
+function constantTimeBufferEqual(left, right) {
+  return left.length === right.length && left.length > 0 && timingSafeEqual(left, right);
+}
+function cookieValue(req, name) {
+  const raw = req.headers.cookie || '';
+  const entry = raw.split(';').map(value => value.trim()).find(value => value.startsWith(`${name}=`));
+  if (!entry) return '';
+  try { return decodeURIComponent(entry.slice(name.length + 1)); } catch { return ''; }
+}
+function createSession(userId) {
+  const payload = Buffer.from(JSON.stringify({ userId, exp: Date.now() + 30 * 24 * 60 * 60 * 1000 })).toString('base64url');
+  const signature = createHmac('sha256', authSecret).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+function sessionUser(req) {
+  if (!authSecret) return null;
+  const token = cookieValue(req, authCookieName);
+  const [payload, signature, extra] = token.split('.');
+  if (!payload || !signature || extra) return null;
+  const expected = createHmac('sha256', authSecret).update(payload).digest();
+  let supplied;
+  try { supplied = Buffer.from(signature, 'base64url'); } catch { return null; }
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return typeof claims.userId === 'string' && claims.exp > Date.now() ? { userId: claims.userId } : null;
+  } catch { return null; }
+}
+function sessionCookie(token) {
+  const secure = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true' ? '; Secure' : '';
+  return `${authCookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure}`;
+}
+async function readAuthUser(userId) {
+  if (profilePool) {
+    const { rows } = await profilePool.query('SELECT id, name, contact_channel AS "contactChannel", password_salt AS "passwordSalt", password_hash AS "passwordHash" FROM auth_users WHERE id=$1', [userId]);
+    return rows[0] || null;
+  }
+  return db.authUsers[userId] || null;
+}
+async function passwordHash(password, saltText) {
+  const salt = saltText ? Buffer.from(saltText, 'base64url') : randomBytes(16);
+  const hash = await scryptAsync(password, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  return { salt: salt.toString('base64url'), hash: Buffer.from(hash).toString('base64url') };
+}
+async function createPasswordUser(userId, channel, contactHash, name, password) {
+  const credentials = await passwordHash(password);
+  if (profilePool) {
+    const { rows } = await profilePool.query(`INSERT INTO auth_users (id, contact_channel, contact_value, name, password_salt, password_hash) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING RETURNING id,name,contact_channel AS "contactChannel",password_salt AS "passwordSalt",password_hash AS "passwordHash"`, [userId, channel, contactHash, name, credentials.salt, credentials.hash]);
+    return rows[0] || null;
+  }
+  if (db.authUsers[userId]) return null;
+  const user = { id: userId, name, contactChannel: channel, contactValue: contactHash, ...credentials };
+  db.authUsers[userId] = user; await persist(); return user;
+}
+async function verifyPassword(user, password) {
+  if (!user?.passwordSalt || !user?.passwordHash) return false;
+  try {
+    const actual = Buffer.from((await passwordHash(password, user.passwordSalt)).hash, 'base64url');
+    const expected = Buffer.from(user.passwordHash, 'base64url');
+    return constantTimeBufferEqual(actual, expected);
+  }
+  catch { return false; }
+}
 const trackingPortals = {
   'Tamil Nadu CM Helpline': 'cmhelpline.tnega.org',
   'Karnataka Janaspandana (iPGRS)': 'ipgrs.karnataka.gov.in',
@@ -95,13 +162,14 @@ async function callAdapter(baseUrl, route, payload) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(15000)
   });
   if (!response.ok) throw Object.assign(new Error(`Configured adapter returned ${response.status}`), { status: 502 });
-  return response.json();
+  const text = await response.text();
+  if (!text) return null;
+  try { return JSON.parse(text); } catch { return { result: text.slice(0, 1000) }; }
 }
 
-async function loadChatMemory(body) {
+async function loadChatMemory(body, accountId) {
   if (body.rememberChat !== true || !isMem0Configured()) return { userId: null, summaries: [] };
-  const userId = mem0UserIdForPhone(body.phoneNumber);
-  if (!userId) return { userId: null, summaries: [] };
+  const userId = `nelam-${accountId}`;
   try {
     const summaries = await searchUserMemories(userId, body.message);
     return { userId, summaries };
@@ -334,19 +402,55 @@ async function handle(req, res) {
   const pathname = decodeURIComponent(url.pathname);
   if (req.method === 'GET' && pathname === '/api/health') return send(res, 200, { service: 'nelam-middleware', mode: 'demo', persistentStore: profileStorage(), integrations: { sarvam: Boolean(process.env.SARVAM_ADAPTER_URL || process.env.SARVAM_API_SUBSCRIPTION_KEY), knowledgeEngine: Boolean(process.env.KNOWLEDGE_ADAPTER_URL), weather: Boolean(process.env.WEATHER_ADAPTER_URL), dss: Boolean(process.env.DSS_ADAPTER_URL), schemeRegistry: Boolean(process.env.SCHEME_ADAPTER_URL), grievanceSystem: Boolean(process.env.GRIEVANCE_ADAPTER_URL), whatsapp: Boolean(process.env.WHATSAPP_ADAPTER_URL), ivr: ivrStatus.active } });
 
-  if (req.method === 'GET' && pathname === '/api/memory/status') return send(res, 200, { configured: isMem0Configured(), provider: 'mem0', scope: 'phone-linked-user', requiresPhone: true });
-  if (req.method === 'GET' && pathname === '/api/profile/status') return send(res, 200, { configured: Boolean(profilePool), storage: profileStorage(), durable: Boolean(profilePool), phoneVerification: 'not-configured' });
+  if (req.method === 'GET' && pathname === '/api/auth/status') return send(res, 200, { enabled: Boolean(authSecret), durable: Boolean(profilePool), storage: profileStorage() });
+  if (req.method === 'GET' && pathname === '/api/auth/session') {
+    const session = sessionUser(req); const user = session && await readAuthUser(session.userId);
+    return send(res, 200, { authenticated: Boolean(user?.name && user.passwordHash), user: user ? { accountKey: user.id, name: user.name, contactChannel: user.contactChannel } : null });
+  }
+  if ((req.method === 'POST' && pathname === '/api/auth/register') || (req.method === 'POST' && pathname === '/api/auth/login')) {
+    if (!authSecret) return send(res, 503, { error: 'Sign-in is unavailable. A stable session secret must be configured.' });
+    const isRegister = pathname === '/api/auth/register';
+    const body = await jsonBody(req); const input = typeof body.contact === 'string' ? body.contact.trim() : '';
+    let channel, contact;
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input)) { channel = 'email'; contact = input.toLowerCase().slice(0, 254); }
+    else { contact = normalizePhoneNumber(input); channel = 'phone'; }
+    if (!contact) return send(res, 400, { error: 'Enter a valid phone number with country code or email address.' });
+    const password = typeof body.password === 'string' ? body.password : '';
+    if (password.length < 10 || password.length > 128) return send(res, 400, { error: 'Use a password between 10 and 128 characters.' });
+    const userId = authUserId(channel, contact);
+    let user;
+    if (isRegister) {
+      const name = typeof body.name === 'string' ? body.name.trim().replace(/\s+/g, ' ').slice(0, 80) : '';
+      if (name.length < 2) return send(res, 400, { error: 'Enter your name to create an account.' });
+      user = await createPasswordUser(userId, channel, userId, name, password);
+      if (!user) return send(res, 409, { error: 'An account already exists for this contact. Sign in instead.' });
+    } else {
+      user = await readAuthUser(userId);
+      if (!await verifyPassword(user, password)) return send(res, 401, { error: 'The contact or password is incorrect.' });
+    }
+    return send(res, 200, { authenticated: true, user: { accountKey: user.id, name: user.name, contactChannel: user.contactChannel } }, { 'Set-Cookie': sessionCookie(createSession(user.id)) });
+  }
+  if (req.method === 'POST' && pathname === '/api/auth/logout') return send(res, 200, { signedOut: true }, { 'Set-Cookie': `${authCookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${process.env.NODE_ENV === 'production' || process.env.RENDER === 'true' ? '; Secure' : ''}` });
+
+  if (req.method === 'POST' && pathname === '/api/ivr/turn' && (!process.env.IVR_STREAM_TOKEN || req.headers['x-ivr-internal-token'] !== process.env.IVR_STREAM_TOKEN)) return send(res, 401, { error: 'IVR session is not authorized.' });
+  const isPublicApi = pathname === '/api/health' || pathname.startsWith('/api/auth/') || pathname === '/api/ivr/turn' || pathname.startsWith('/api/channels/');
+  if (pathname.startsWith('/api/admin/')) return send(res, 403, { error: 'Admin access is not available through the farmer sign-in.' });
+  if (pathname.startsWith('/api/') && !isPublicApi && pathname !== '/api/memory/status' && pathname !== '/api/profile/status') {
+    const session = sessionUser(req);
+    if (!session) return send(res, 401, { error: 'Please sign in to continue.' });
+    const account = await readAuthUser(session.userId);
+    if (!account?.name) return send(res, 403, { error: 'Finish setting up your account before continuing.' });
+    req.farmerSession = session;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/memory/status') return send(res, 200, { configured: isMem0Configured(), provider: 'mem0', scope: 'account', requiresPhone: false });
+  if (req.method === 'GET' && pathname === '/api/profile/status') return send(res, 200, { configured: Boolean(profilePool), storage: profileStorage(), durable: Boolean(profilePool), identityAuthentication: 'password' });
   if (req.method === 'GET' && pathname === '/api/grievance-tracking') {
-    const phone = normalizePhoneNumber(req.headers['x-farmer-phone']);
-    const farmerId = phone && farmerTrackingId(phone);
-    if (!farmerId) return send(res, 400, { error: 'Enter a valid phone number to find saved grievances.' });
-    return send(res, 200, { grievances: await listGrievanceTracking(farmerId), storage: profileStorage(), phoneVerification: 'not-configured', liveGovernmentStatus: false });
+    return send(res, 200, { grievances: await listGrievanceTracking(req.farmerSession.userId), storage: profileStorage(), liveGovernmentStatus: false });
   }
   if (req.method === 'POST' && pathname === '/api/grievance-tracking') {
     const body = await jsonBody(req);
-    const phone = normalizePhoneNumber(body.phoneNumber);
-    const farmerId = phone && farmerTrackingId(phone);
-    if (!farmerId) return send(res, 400, { error: 'A valid phone number is required.' });
+    const farmerId = req.farmerSession.userId;
     if (body.consent !== true) return send(res, 400, { error: 'Consent is required to save a portal tracking ID.' });
     const portalHost = trackingPortals[body.portal];
     let parsedUrl;
@@ -359,25 +463,19 @@ async function handle(req, res) {
   if (req.method === 'PUT' && pathname.startsWith('/api/grievance-tracking/')) {
     const id = pathname.slice('/api/grievance-tracking/'.length);
     const body = await jsonBody(req);
-    const phone = normalizePhoneNumber(body.phoneNumber);
-    const farmerId = phone && farmerTrackingId(phone);
-    if (!farmerId) return send(res, 400, { error: 'A valid phone number is required.' });
+    const farmerId = req.farmerSession.userId;
     if (!['submitted','in_progress','unresolved','resolved'].includes(body.status)) return send(res, 400, { error: 'Choose a valid status.' });
     if (!await updateGrievanceTracking(id, farmerId, body.status)) return send(res, 404, { error: 'Saved grievance not found for this phone number.' });
     return send(res, 200, { updated: true });
   }
   if (req.method === 'GET' && pathname === '/api/profile') {
-    const phone = normalizePhoneNumber(req.headers['x-farmer-phone']);
-    const userId = phone && mem0UserIdForPhone(phone);
-    if (!userId) return send(res, 400, { error: 'A valid phone number is required.' });
+    const userId = req.farmerSession.userId;
     const profile = await getFarmerProfile(userId);
     return send(res, 200, { profile: profile?.preferences || {}, updatedAt: profile?.updatedAt || null, storage: profileStorage() });
   }
   if (req.method === 'PUT' && pathname === '/api/profile') {
     const body = await jsonBody(req);
-    const phone = normalizePhoneNumber(body.phoneNumber);
-    const userId = phone && mem0UserIdForPhone(phone);
-    if (!userId) return send(res, 400, { error: 'A valid phone number is required.' });
+    const userId = req.farmerSession.userId;
     const preferences = cleanPreferences(body.preferences);
     const profile = await saveFarmerProfile(userId, preferences);
     return send(res, 200, { profile: profile.preferences, updatedAt: profile.updatedAt, storage: profileStorage() });
@@ -403,13 +501,10 @@ async function handle(req, res) {
 
   if (req.method === 'POST' && pathname === '/api/crop/advisory') {
     const body = await jsonBody(req);
-    const memory = await loadChatMemory(body);
-    const normalizedPhone = normalizePhoneNumber(body.phoneNumber);
-    const farmerId = normalizedPhone && farmerTrackingId(normalizedPhone);
-    const grievanceRecords = farmerId ? await listGrievanceTracking(farmerId) : [];
+    const memory = await loadChatMemory(body, req.farmerSession.userId);
+    const grievanceRecords = await listGrievanceTracking(req.farmerSession.userId);
     const grievanceContext = grievanceRecords.map(({ caseId, state, category, authorityLevel, portal, portalUrl, trackingId, status, updatedAt }) => ({ caseId, state, category, authorityLevel, portal, portalUrl, trackingId, status, updatedAt }));
-    const { phoneNumber: _phoneNumber, ...safeBody } = body;
-    const base = { ...safeBody, channel: 'web-demo', memoryContext: memory.summaries, grievanceContext };
+    const base = { ...body, channel: 'web-demo', memoryContext: memory.summaries, grievanceContext };
     const [knowledge, weather, dss] = await Promise.all([
       callAdapter(process.env.KNOWLEDGE_ADAPTER_URL, 'crop-advisory', base),
       /weather|rain|மழை|மழை|ಮಳೆ/i.test(body.message || '') ? callAdapter(process.env.WEATHER_ADAPTER_URL, 'forecast', base) : null,
@@ -481,7 +576,7 @@ async function handle(req, res) {
     const classification = await callAdapter(process.env.SARVAM_ADAPTER_URL, 'grievance-intake', { description: body.description, language: body.language, categories: categories.map(item => item.name) });
     const external = await callAdapter(process.env.GRIEVANCE_ADAPTER_URL, 'grievances', { ...body, category: classification?.category || body.category || classifyGrievance(body.description), summary: classification?.summary || body.description.trim().slice(0, 240) });
     const id = external?.id || `NL-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    const record = { id, category: classification?.category || body.category || classifyGrievance(body.description), description: body.description.trim(), summary: classification?.summary || body.description.trim().slice(0, 240), village: body.village.trim(), language: body.language || 'ta', status: external?.status || 'Received', routing: external?.routing || 'Demo queue · configure department routing', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), demo: !external };
+    const record = { id, ownerId: req.farmerSession.userId, category: classification?.category || body.category || classifyGrievance(body.description), description: body.description.trim(), summary: classification?.summary || body.description.trim().slice(0, 240), village: body.village.trim(), language: body.language || 'ta', status: external?.status || 'Received', routing: external?.routing || 'Demo queue · configure department routing', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), demo: !external };
     db.grievances.unshift(record); await persist();
     return send(res, external ? 201 : 201, { id, status: record.status, demo: record.demo, message: record.demo ? 'Stored in the local demo case register; no government office has received this grievance.' : undefined });
   }
@@ -489,7 +584,7 @@ async function handle(req, res) {
   const caseMatch = pathname.match(/^\/api\/grievances\/([^/]+)$/);
   if (req.method === 'GET' && caseMatch) {
     const record = db.grievances.find(item => item.id === caseMatch[1]);
-    if (!record) return send(res, 404, { error: 'Grievance ID not found.' });
+    if (!record || record.ownerId !== req.farmerSession.userId) return send(res, 404, { error: 'Grievance ID not found.' });
     const external = await callAdapter(process.env.GRIEVANCE_ADAPTER_URL, `grievances/${encodeURIComponent(record.id)}/status`, {});
     return send(res, 200, { ...record, ...(external || {}) });
   }

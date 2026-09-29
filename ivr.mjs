@@ -41,7 +41,7 @@ async function answerTurn(transcript, language) {
   const apiPort = Number(process.env.PORT || 4173);
   const baseUrl = process.env.NELAM_INTERNAL_URL || `http://127.0.0.1:${apiPort}`;
   const response = await fetch(`${baseUrl}/api/ivr/turn`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-IVR-Internal-Token': process.env.IVR_STREAM_TOKEN || '' },
     body: JSON.stringify({ transcript, language, channel: 'ivr' }), signal: AbortSignal.timeout(30000)
   });
   if (!response.ok) throw new Error(`IVR conversation service returned ${response.status}`);
