@@ -135,7 +135,12 @@ function updateSchemeCopy(language) {
   document.querySelector('#tnSchemeQuestions h3').textContent = extra.groups[0];
   document.querySelector('#tnSchemeQuestions > p').textContent = extra.groups[1];
   for (const [id, labels] of Object.entries(extra.options)) [...document.getElementById(id).options].forEach((option, index) => { if (labels[index]) option.textContent = labels[index]; });
-  document.getElementById('exclusionHelp').textContent = copy.exclusionHelp;
+  const exclusionDetails = language === 'ta'
+    ? ' முழு பட்டியல்: நிறுவன நில உரிமையாளர்; தற்போதைய/முன்னாள் அரசியலமைப்பு பதவி, அமைச்சர், நாடாளுமன்ற/சட்டமன்ற உறுப்பினர், மாநகர மேயர், மாவட்ட ஊராட்சி தலைவர்; MTS/Class IV/Group D தவிர பெரும்பாலான அரசு/உள்ளாட்சி ஊழியர்கள்; விதிவிலக்குகளுடன் மாதம் ₹10,000+ ஓய்வூதியதாரர்; கடந்த மதிப்பீட்டு ஆண்டில் வருமானவரி செலுத்தியவர்; பதிவு பெற்றுப் பணிபுரியும் மருத்துவர், பொறியாளர், வழக்கறிஞர், CA, கட்டிடக் கலைஞர்.'
+    : language === 'kn'
+      ? ' ಪೂರ್ಣ ಪಟ್ಟಿ: ಸಂಸ್ಥೆಯ ಭೂಮಾಲೀಕರು; ಪ್ರಸ್ತುತ/ಮಾಜಿ ಸಂವಿಧಾನಿಕ ಹುದ್ದೆದಾರರು, ಸಚಿವರು, ಸಂಸದರು/ಶಾಸಕರು, ಮೇಯರ್‌ಗಳು, ಜಿಲ್ಲಾ ಪಂಚಾಯತ್ ಅಧ್ಯಕ್ಷರು; MTS/Class IV/Group D ಹೊರತುಪಡಿಸಿ ಬಹುತೇಕ ಸರ್ಕಾರಿ/ಸ್ಥಳೀಯ ಸಂಸ್ಥೆ ನೌಕರರು; ವಿನಾಯಿತಿಗಳೊಂದಿಗೆ ತಿಂಗಳಿಗೆ ₹10,000+ ಪಿಂಚಣಿದಾರರು; ಕಳೆದ ಮೌಲ್ಯಮಾಪನ ವರ್ಷದಲ್ಲಿ ಆದಾಯ ತೆರಿಗೆ ಪಾವತಿಸಿದವರು; ನೋಂದಾಯಿತ ವೈದ್ಯರು, ಎಂಜಿನಿಯರ್‌ಗಳು, ವಕೀಲರು, CAಗಳು, ವಾಸ್ತುಶಿಲ್ಪಿಗಳು.'
+      : ' Full list: institutional landholders; current/former constitutional office holders, ministers, MPs/MLAs, mayors and district panchayat chairs; most government/local-body employees except MTS/Class IV/Group D; pensioners at ₹10,000+ monthly with stated exceptions; anyone who paid income tax in the last assessment year; registered practising doctors, engineers, lawyers, CAs and architects.';
+  document.getElementById('exclusionHelp').textContent = `${copy.exclusionHelp}${exclusionDetails}`;
   document.getElementById('checkSchemes').firstChild.textContent = `${copy.check} `;
   for (const [id, labels] of [['state', copy.states], ['land', copy.lands], ['aadhaar', copy.aadhaarOptions], ['exclusions', copy.exclusionOptions]]) {
     [...document.getElementById(id).options].forEach((option, index) => { if (labels[index]) option.textContent = labels[index]; });
@@ -339,8 +344,9 @@ document.getElementById('checkSchemes').addEventListener('click', async () => {
   } catch (_) {
     results = [
       { name: 'PM-KISAN', status: 'manual_review', reason: 'The local scheme service is unavailable, so none of your answers were checked. Do not rely on a scheme match until the check runs.', action: 'Retry when connected, or verify directly with PM-KISAN.', sourceUrl: 'https://pmkisan.gov.in/' },
-      { name: 'Mukhyamantri Samathuvapuram', status: 'manual_review', reason: 'Tamil Nadu housing allotment programme; not a general farmer benefit.', action: 'Ask the local Block Development Office about current allotments.', sourceUrl: 'https://tnrd.tn.gov.in/schemes/st_samathuvapuram.html' },
-      { name: 'Krushak Yojana', status: 'manual_review', reason: 'The exact programme and state are unclear.', action: 'Provide the exact scheme name and state to an agriculture office.', sourceUrl: 'https://agri.odisha.gov.in/en/agriculturedepartmentagricultu/kalia' }
+      { name: 'Periyar Ninaivu Samathuvapuram (housing)', status: 'manual_review', reason: 'Tamil Nadu housing allotment programme; the eligibility service is unavailable, so no answers were evaluated.', action: 'Ask the local Block Development Office about the current Government Order and local allotments.', sourceUrl: 'https://tnrd.tn.gov.in/project/go_files/3_722_2023_91.pdf' },
+      { name: 'Krushak Yojana', status: 'not_eligible', reason: 'This name does not identify a verified Tamil Nadu/Karnataka scheme. Odisha programmes have separate residency rules.', action: 'Choose the exact Odisha programme only if you are an Odisha resident.', sourceUrl: 'https://krushak.odisha.gov.in/' },
+      { name: state === 'Tamil Nadu' ? 'Tamil Nadu AGRISNET scheme directory' : 'Karnataka Raitamitra', status: 'manual_review', reason: 'The state scheme catalogue needs to be checked for the exact district, crop, input and current application window.', action: 'Open the department directory and select a specific benefit.', sourceUrl: state === 'Tamil Nadu' ? 'https://www.tnagrisnet.tn.gov.in/home/schemes/tm' : 'https://raitamitra.karnataka.gov.in/' }
     ];
     document.querySelector('#schemeResults > p').textContent = profileMessage('Pre-screen only. There is no live land-record lookup or government decision. Confirm current rules and open applications with the department.', 'முதற்கட்டச் சரிபார்ப்பு மட்டுமே. நேரடி நிலப் பதிவு தேடல் அல்லது அரசு முடிவு இல்லை. தற்போதைய விதி, விண்ணப்ப திறப்பைத் துறையில் உறுதிப்படுத்தவும்.', 'ಪ್ರಾಥಮಿಕ ಪರಿಶೀಲನೆ ಮಾತ್ರ. ನೇರ ಭೂ ದಾಖಲೆ ಹುಡುಕಾಟ ಅಥವಾ ಸರ್ಕಾರಿ ತೀರ್ಮಾನವಿಲ್ಲ. ಪ್ರಸ್ತುತ ನಿಯಮ ಮತ್ತು ತೆರೆದ ಅರ್ಜಿಗಳನ್ನು ಇಲಾಖೆಯಲ್ಲಿ ದೃಢಪಡಿಸಿ.');
   }
