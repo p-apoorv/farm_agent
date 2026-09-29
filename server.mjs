@@ -30,7 +30,7 @@ let profilePool = null;
 if (process.env.DATABASE_URL) {
   try {
     const { Pool } = await import('pg');
-    profilePool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined });
+    profilePool = new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 10000, ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined });
     await profilePool.query(`CREATE TABLE IF NOT EXISTS farmer_profiles (user_id TEXT PRIMARY KEY, preferences JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await profilePool.query(`CREATE TABLE IF NOT EXISTS farmer_grievance_tracking (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, farmer_id TEXT NOT NULL, state TEXT NOT NULL, category TEXT NOT NULL, authority_level TEXT NOT NULL, portal TEXT NOT NULL, portal_url TEXT NOT NULL, tracking_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'submitted', filed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   } catch (error) {
